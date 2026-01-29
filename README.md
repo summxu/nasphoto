@@ -12,6 +12,8 @@ npm install
 npm run dev
 ```
 
+配置文件默认读取 `config.json`（可用 `NASPHOTO_CONFIG` 指定路径）。
+
 访问：
 - `http://localhost:3000/`
 - `http://localhost:3000/health`
