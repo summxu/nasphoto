@@ -1,0 +1,130 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 3000,
+    "baseUrl": "http://nasphoto.local",
+    "enableCors": false
+  },
+  "storage": {
+    "libraryRoots": [
+      "D:/Photos"
+    ],
+    "cacheDir": "D:/nasphoto-cache",
+    "thumbnailDir": "D:/nasphoto-cache/thumbs",
+    "faceDir": "D:/nasphoto-cache/faces",
+    "memoryDir": "D:/nasphoto-cache/memories",
+    "tempDir": "D:/nasphoto-cache/tmp"
+  },
+  "security": {
+    "defaultPolicy": "deny",
+    "pathTraversalGuard": true
+  },
+  "users": [
+    {
+      "id": "admin",
+      "passwordHash": "CHANGE_ME",
+      "folders": [
+        {
+          "path": "/",
+          "permissions": {
+            "view": true,
+            "create": true,
+            "modify": true,
+            "delete": true
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "sessionTtlMinutes": 1440,
+    "sessionCookieName": "nasphoto_sid",
+    "passwordHashAlgorithm": "bcrypt"
+  },
+  "scan": {
+    "cron": "0 3 * * *",
+    "incremental": true,
+    "ignoreHidden": true,
+    "ignorePatterns": [
+      "@eaDir",
+      "#recycle",
+      ".@__thumb"
+    ],
+    "maxConcurrency": 1,
+    "batchSize": 200
+  },
+  "thumbnails": {
+    "sizes": [
+      256,
+      512,
+      1024
+    ],
+    "format": "jpeg",
+    "quality": 82,
+    "concurrency": 1,
+    "regenerate": false
+  },
+  "media": {
+    "supportedImageExt": [
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".webp",
+      ".heic",
+      ".tif",
+      ".tiff"
+    ],
+    "supportedVideoExt": [
+      ".mp4",
+      ".mov",
+      ".m4v",
+      ".mkv",
+      ".avi"
+    ],
+    "preferExifTime": true
+  },
+  "faces": {
+    "enabled": true,
+    "scanCron": "30 2 * * *",
+    "minFaceSize": 80,
+    "cluster": {
+      "eps": 0.45,
+      "minSamples": 3
+    }
+  },
+  "memories": {
+    "enabled": true,
+    "generateCron": "0 4 * * 1",
+    "maxDurationSeconds": 90,
+    "introSeconds": 3,
+    "outroSeconds": 3,
+    "musicDir": "D:/nasphoto-music",
+    "rules": {
+      "annual": true,
+      "monthly": true,
+      "holidays": [
+        "01-01",
+        "02-14",
+        "12-25"
+      ]
+    }
+  },
+  "pwa": {
+    "enabled": true,
+    "offlineCacheDays": 365,
+    "maxCacheEntries": 500
+  },
+  "tasks": {
+    "workerIntervalSeconds": 5,
+    "retry": {
+      "maxAttempts": 3,
+      "backoffSeconds": 60
+    }
+  },
+  "logging": {
+    "level": "info",
+    "file": "D:/nasphoto-cache/logs/app.log",
+    "maxSizeMB": 10,
+    "maxFiles": 5
+  }
+}
