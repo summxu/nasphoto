@@ -1,10 +1,16 @@
 import HyperExpress from "hyper-express";
 import { CONFIG_PATH, loadConfig } from "./config";
+import { openDatabase } from "./db";
+import { MediaScanner } from "./scanner";
 
 const config = loadConfig();
 const { host, port, enableCors } = config.server;
 
 console.log(`[config] loaded ${CONFIG_PATH}`);
+
+const db = openDatabase(config);
+const scanner = new MediaScanner(config, db);
+scanner.schedule();
 
 const server = new HyperExpress.Server();
 
@@ -26,6 +32,15 @@ if (enableCors) {
 
 server.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+server.get("/scan/status", (_req, res) => {
+  res.json(scanner.getStatus());
+});
+
+server.get("/scan", (_req, res) => {
+  const result = scanner.trigger("manual");
+  res.status(result.started ? 202 : 409).json(result);
 });
 
 server.get("/", (_req, res) => {

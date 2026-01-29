@@ -47,16 +47,16 @@
     "ignorePatterns": [
       "@eaDir",
       "#recycle",
-      ".@__thumb"
+      ".@__thumb",
+      "@Recycle",
+      "@Recently-Snapshot"
     ],
     "maxConcurrency": 1,
-    "batchSize": 200
+    "batchSize": 250
   },
   "thumbnails": {
     "sizes": [
-      256,
-      512,
-      1024
+      256
     ],
     "format": "jpeg",
     "quality": 82,
@@ -113,7 +113,7 @@
   },
   "logging": {
     "level": "info",
-    "file": "D:/nasphoto-cache/logs/app.log",
+    "file": "D:\\NodeJS\\nasphoto\\data\\tmp\\app.log",
     "maxSizeMB": 10,
     "maxFiles": 5
   }
