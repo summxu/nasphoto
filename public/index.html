@@ -2,13 +2,131 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f2f2f7" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="NAS Photo" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>NAS Photo</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-maskable.svg" />
+    <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <main>
-      <h1>NAS Photo</h1>
-      <p>前端静态页面占位。</p>
-    </main>
+    <div id="app" class="app">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div>
+            <div class="topbar-title" id="topbar-title">图库</div>
+            <div class="topbar-meta" id="topbar-meta">全部照片</div>
+          </div>
+          <button class="topbar-action" id="refresh-button" type="button">
+            刷新
+          </button>
+        </div>
+      </header>
+      <main class="main">
+        <section class="view is-active" id="view-gallery">
+          <div class="gallery-scroller" id="gallery-scroller">
+            <div class="gallery-spacer" id="gallery-spacer" aria-hidden="true"></div>
+            <div class="gallery-items" id="gallery-items" role="list"></div>
+          </div>
+          <div class="gallery-overlay" id="gallery-overlay">
+            <div class="gallery-loading" id="gallery-loading">
+              <div class="spinner"></div>
+              <div class="loading-text">正在整理照片</div>
+            </div>
+            <div class="gallery-empty" id="gallery-empty">
+              <div class="empty-title">暂无照片</div>
+              <div class="empty-sub">请先扫描媒体库</div>
+            </div>
+            <div class="gallery-error" id="gallery-error">
+              <div class="error-title">加载失败</div>
+              <div class="error-sub">请检查服务是否已启动</div>
+              <button class="retry-button" id="retry-button" type="button">
+                重试
+              </button>
+            </div>
+          </div>
+        </section>
+        <section class="view" id="view-folders"></section>
+        <section class="view" id="view-portraits"></section>
+        <section class="view" id="view-memories"></section>
+      </main>
+      <nav class="tabbar" role="tablist">
+        <button
+          class="tab is-active"
+          data-tab="gallery"
+          role="tab"
+          aria-selected="true"
+          type="button"
+        >
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="2"></rect>
+              <rect x="14" y="3" width="7" height="7" rx="2"></rect>
+              <rect x="3" y="14" width="7" height="7" rx="2"></rect>
+              <rect x="14" y="14" width="7" height="7" rx="2"></rect>
+            </svg>
+          </span>
+          <span class="tab-label">图库</span>
+        </button>
+        <button class="tab" data-tab="folders" role="tab" type="button">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M3 7.5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+              ></path>
+            </svg>
+          </span>
+          <span class="tab-label">文件夹</span>
+        </button>
+        <button class="tab" data-tab="portraits" role="tab" type="button">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="9" r="3.5"></circle>
+              <path d="M5 19a7 7 0 0 1 14 0"></path>
+            </svg>
+          </span>
+          <span class="tab-label">人像</span>
+        </button>
+        <button class="tab" data-tab="memories" role="tab" type="button">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 6a6 6 0 1 1-6 6"
+                fill="none"
+                stroke-width="2"
+              ></path>
+              <path d="M12 3v3l2-2" fill="none" stroke-width="2"></path>
+              <path d="M12 9v4l3 2" fill="none" stroke-width="2"></path>
+            </svg>
+          </span>
+          <span class="tab-label">回忆</span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="viewer" id="viewer" aria-hidden="true">
+      <div class="viewer-backdrop" id="viewer-backdrop"></div>
+      <div class="viewer-content">
+        <button class="viewer-close" id="viewer-close" type="button" aria-label="关闭">
+          ×
+        </button>
+        <div class="viewer-stage" id="viewer-stage"></div>
+        <button class="viewer-nav viewer-prev" id="viewer-prev" type="button" aria-label="上一张">
+          ‹
+        </button>
+        <button class="viewer-nav viewer-next" id="viewer-next" type="button" aria-label="下一张">
+          ›
+        </button>
+      </div>
+    </div>
+
+    <script src="/app.js" defer></script>
   </body>
 </html>

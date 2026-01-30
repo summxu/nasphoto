@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="NAS Photo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a84ff" />
+      <stop offset="100%" stop-color="#32d74b" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="160" fill="url(#bg)" />
+  <rect x="136" y="168" width="240" height="176" rx="36" fill="rgba(255,255,255,0.9)" />
+  <circle cx="256" cy="256" r="54" fill="#0a84ff" />
+  <rect x="190" y="138" width="132" height="32" rx="16" fill="rgba(255,255,255,0.92)" />
+</svg>

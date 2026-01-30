@@ -49,6 +49,12 @@ export interface LoggingConfig {
   maxFiles: number;
 }
 
+export interface PwaConfig {
+  enabled: boolean;
+  offlineCacheDays: number;
+  maxCacheEntries: number;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   storage: StorageConfig;
@@ -56,6 +62,7 @@ export interface AppConfig {
   media: MediaConfig;
   thumbnails: ThumbnailsConfig;
   logging: LoggingConfig;
+  pwa?: PwaConfig;
   [key: string]: unknown;
 }
 
@@ -165,6 +172,14 @@ const CONFIG_SCHEMA: Record<string, Record<string, SchemaChecker>> = {
     maxSizeMB: (value, pathLabel) =>
       assertType(value, pathLabel, isFiniteNumber, "a number"),
     maxFiles: (value, pathLabel) =>
+      assertType(value, pathLabel, isInteger, "an integer"),
+  },
+  pwa: {
+    enabled: (value, pathLabel) =>
+      assertType(value, pathLabel, isBoolean, "a boolean"),
+    offlineCacheDays: (value, pathLabel) =>
+      assertType(value, pathLabel, isFiniteNumber, "a number"),
+    maxCacheEntries: (value, pathLabel) =>
       assertType(value, pathLabel, isInteger, "an integer"),
   },
 };
