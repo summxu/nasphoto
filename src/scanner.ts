@@ -6,6 +6,7 @@ import exifr from "exifr";
 import cron, { ScheduledTask } from "node-cron";
 import type { AppConfig } from "./config";
 import type { SqliteDatabase } from "./db";
+import type { Logger } from "./logger";
 import { buildThumbnailPath } from "./thumbnails";
 
 type MediaType = "image" | "video";
@@ -195,6 +196,7 @@ export class MediaScanner {
   constructor(
     private readonly config: AppConfig,
     private readonly db: SqliteDatabase,
+    private readonly logger: Logger,
   ) {
     this.imageExt = new Set(
       config.media.supportedImageExt.map((ext) => ext.toLowerCase()),
@@ -276,13 +278,15 @@ export class MediaScanner {
       return;
     }
     if (!cron.validate(this.config.scan.cron)) {
-      console.warn(`[scan] invalid cron expression: ${this.config.scan.cron}`);
+      this.logger.warn(
+        `[scan] invalid cron expression: ${this.config.scan.cron}`,
+      );
       return;
     }
     this.scheduledTask = cron.schedule(this.config.scan.cron, () => {
       this.trigger("cron");
     });
-    console.log(`[scan] scheduled cron ${this.config.scan.cron}`);
+    this.logger.info(`[scan] scheduled cron ${this.config.scan.cron}`);
   }
 
   trigger(reason: ScanReason = "manual"): ScanTriggerResult {
@@ -300,6 +304,7 @@ export class MediaScanner {
       reason,
       startedAt: new Date().toISOString(),
     };
+    this.logger.info("[scan] started", { runId, reason });
 
     this.scan(runId, reason)
       .then((summary) => {
@@ -331,7 +336,7 @@ export class MediaScanner {
         if (this.last) {
           this.onComplete?.(this.last);
         }
-        console.error(`[scan] failed: ${message}`);
+        this.logger.error(`[scan] failed: ${message}`);
       })
       .finally(() => {
         this.running = false;
@@ -374,7 +379,7 @@ export class MediaScanner {
 
     if (this.roots.length === 0) {
       const message = "[scan] no library roots configured";
-      console.warn(message);
+      this.logger.warn(message);
       errorSamples.push(message);
     }
 
@@ -386,7 +391,7 @@ export class MediaScanner {
     const finishedAt = new Date();
     const durationMs = finishedAt.getTime() - startedAt.getTime();
 
-    console.log(
+    this.logger.info(
       `[scan] done in ${durationMs}ms, mediaFiles=${totals.mediaFiles}, errors=${totals.errors}`,
     );
 

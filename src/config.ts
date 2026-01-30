@@ -42,12 +42,20 @@ export interface ThumbnailsConfig {
   ffmpegPath: string;
 }
 
+export interface LoggingConfig {
+  level: string;
+  file: string;
+  maxSizeMB: number;
+  maxFiles: number;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   storage: StorageConfig;
   scan: ScanConfig;
   media: MediaConfig;
   thumbnails: ThumbnailsConfig;
+  logging: LoggingConfig;
   [key: string]: unknown;
 }
 
@@ -148,6 +156,16 @@ const CONFIG_SCHEMA: Record<string, Record<string, SchemaChecker>> = {
       assertType(value, pathLabel, isBoolean, "a boolean"),
     ffmpegPath: (value, pathLabel) =>
       assertType(value, pathLabel, isString, "a string"),
+  },
+  logging: {
+    level: (value, pathLabel) =>
+      assertType(value, pathLabel, isString, "a string"),
+    file: (value, pathLabel) =>
+      assertType(value, pathLabel, isString, "a string"),
+    maxSizeMB: (value, pathLabel) =>
+      assertType(value, pathLabel, isFiniteNumber, "a number"),
+    maxFiles: (value, pathLabel) =>
+      assertType(value, pathLabel, isInteger, "an integer"),
   },
 };
 

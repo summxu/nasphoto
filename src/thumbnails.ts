@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import type { AppConfig } from "./config";
 import type { SqliteDatabase } from "./db";
+import type { Logger } from "./logger";
 
 type MediaType = "image" | "video";
 type ThumbnailReason = "manual" | "scan" | "startup";
@@ -134,6 +135,7 @@ export class ThumbnailService {
   constructor(
     private readonly config: AppConfig,
     private readonly db: SqliteDatabase,
+    private readonly logger: Logger,
   ) {
     this.statements = {
       selectMedia: db.prepare(
@@ -165,6 +167,7 @@ export class ThumbnailService {
       reason,
       startedAt: new Date().toISOString(),
     };
+    this.logger.info("[thumbnails] started", { runId, reason });
 
     this.generate(runId, reason)
       .then((summary) => {
@@ -190,7 +193,7 @@ export class ThumbnailService {
           },
           errorSamples: [message],
         };
-        console.error(`[thumbnails] failed: ${message}`);
+        this.logger.error(`[thumbnails] failed: ${message}`);
       })
       .finally(() => {
         this.running = false;
@@ -302,7 +305,7 @@ export class ThumbnailService {
     const finishedAt = new Date();
     const durationMs = finishedAt.getTime() - startedAt.getTime();
 
-    console.log(
+    this.logger.info(
       `[thumbnails] done in ${durationMs}ms, generated=${counts.generated}, skipped=${counts.skipped}, failed=${counts.failed}, cleaned=${counts.cleaned}`,
     );
 
