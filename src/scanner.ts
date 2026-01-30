@@ -6,6 +6,7 @@ import exifr from "exifr";
 import cron, { ScheduledTask } from "node-cron";
 import type { AppConfig } from "./config";
 import type { SqliteDatabase } from "./db";
+import { buildThumbnailPath } from "./thumbnails";
 
 type MediaType = "image" | "video";
 type ScanReason = "manual" | "cron" | "startup";
@@ -75,32 +76,6 @@ const toPosixPath = (value: string): string => value.split(path.sep).join("/");
 const buildDirPath = (relPosix: string): string => {
   const dir = path.posix.dirname(relPosix);
   return dir === "." ? "/" : `/${dir}`;
-};
-
-const normalizeThumbExtension = (format: string): string => {
-  const normalized = format.trim().toLowerCase();
-  if (normalized === "jpeg" || normalized === "jpg") {
-    return ".jpg";
-  }
-  if (normalized === "png") {
-    return ".png";
-  }
-  if (normalized === "webp") {
-    return ".webp";
-  }
-  return normalized.startsWith(".") ? normalized : `.${normalized}`;
-};
-
-const buildThumbnailPath = (
-  config: AppConfig,
-  relPosix: string,
-): string => {
-  const size = config.thumbnails.sizes[0] ?? 256;
-  const ext = normalizeThumbExtension(config.thumbnails.format);
-  const parsed = path.posix.parse(relPosix);
-  const targetRel = path.posix.join(parsed.dir, `${parsed.name}${ext}`);
-  const segments = targetRel.split("/");
-  return path.join(config.storage.thumbnailDir, String(size), ...segments);
 };
 
 const parseExifDate = (value: unknown): Date | null => {
@@ -215,6 +190,7 @@ export class MediaScanner {
   private current?: ScanStatus["current"];
   private last?: ScanSummary;
   private scheduledTask?: ScheduledTask;
+  private onComplete?: (summary: ScanSummary) => void;
 
   constructor(
     private readonly config: AppConfig,
@@ -328,6 +304,7 @@ export class MediaScanner {
     this.scan(runId, reason)
       .then((summary) => {
         this.last = summary;
+        this.onComplete?.(summary);
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -351,6 +328,9 @@ export class MediaScanner {
           roots: [],
           errorSamples: [message],
         };
+        if (this.last) {
+          this.onComplete?.(this.last);
+        }
         console.error(`[scan] failed: ${message}`);
       })
       .finally(() => {
@@ -371,6 +351,10 @@ export class MediaScanner {
       current: this.current,
       last: this.last,
     };
+  }
+
+  setOnComplete(handler: (summary: ScanSummary) => void): void {
+    this.onComplete = handler;
   }
 
   private async scan(runId: string, reason: ScanReason): Promise<ScanSummary> {

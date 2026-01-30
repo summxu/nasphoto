@@ -37,6 +37,8 @@ export interface ThumbnailsConfig {
   quality: number;
   concurrency: number;
   regenerate: boolean;
+  videoSeekSeconds: number;
+  videoKeyframesOnly: boolean;
 }
 
 export interface AppConfig {
@@ -84,6 +86,8 @@ const DEFAULT_THUMBNAILS_CONFIG: ThumbnailsConfig = {
   quality: 82,
   concurrency: 1,
   regenerate: false,
+  videoSeekSeconds: 1,
+  videoKeyframesOnly: true,
 };
 
 export const CONFIG_PATH =
@@ -288,6 +292,17 @@ const normalizeThumbnailsConfig = (value: unknown): ThumbnailsConfig => {
     typeof value.regenerate === "boolean"
       ? value.regenerate
       : DEFAULT_THUMBNAILS_CONFIG.regenerate;
+  const videoSeekSeconds = Math.max(
+    0,
+    normalizeNumber(
+      value.videoSeekSeconds,
+      DEFAULT_THUMBNAILS_CONFIG.videoSeekSeconds,
+    ),
+  );
+  const videoKeyframesOnly =
+    typeof value.videoKeyframesOnly === "boolean"
+      ? value.videoKeyframesOnly
+      : DEFAULT_THUMBNAILS_CONFIG.videoKeyframesOnly;
 
   return {
     sizes: sizes.length > 0 ? sizes : [...DEFAULT_THUMBNAILS_CONFIG.sizes],
@@ -295,6 +310,8 @@ const normalizeThumbnailsConfig = (value: unknown): ThumbnailsConfig => {
     quality,
     concurrency,
     regenerate,
+    videoSeekSeconds,
+    videoKeyframesOnly,
   };
 };
 
