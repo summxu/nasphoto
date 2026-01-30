@@ -39,6 +39,7 @@ export interface ThumbnailsConfig {
   regenerate: boolean;
   videoSeekSeconds: number;
   videoKeyframesOnly: boolean;
+  ffmpegPath: string;
 }
 
 export interface AppConfig {
@@ -88,6 +89,7 @@ const DEFAULT_THUMBNAILS_CONFIG: ThumbnailsConfig = {
   regenerate: false,
   videoSeekSeconds: 1,
   videoKeyframesOnly: true,
+  ffmpegPath: "",
 };
 
 export const CONFIG_PATH =
@@ -303,6 +305,10 @@ const normalizeThumbnailsConfig = (value: unknown): ThumbnailsConfig => {
     typeof value.videoKeyframesOnly === "boolean"
       ? value.videoKeyframesOnly
       : DEFAULT_THUMBNAILS_CONFIG.videoKeyframesOnly;
+  const ffmpegPath = normalizeString(
+    value.ffmpegPath,
+    DEFAULT_THUMBNAILS_CONFIG.ffmpegPath,
+  );
 
   return {
     sizes: sizes.length > 0 ? sizes : [...DEFAULT_THUMBNAILS_CONFIG.sizes],
@@ -312,6 +318,7 @@ const normalizeThumbnailsConfig = (value: unknown): ThumbnailsConfig => {
     regenerate,
     videoSeekSeconds,
     videoKeyframesOnly,
+    ffmpegPath,
   };
 };
 

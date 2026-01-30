@@ -140,8 +140,12 @@ export class ThumbnailService {
         "SELECT root, rel_path, media_type, mtime_ms FROM media_items ORDER BY root, rel_path",
       ),
     };
+    const configPath = this.config.thumbnails.ffmpegPath?.trim();
     this.ffmpegPath =
-      process.env.NASPHOTO_FFMPEG ?? process.env.FFMPEG_PATH ?? "ffmpeg";
+      configPath ||
+      process.env.NASPHOTO_FFMPEG ||
+      process.env.FFMPEG_PATH ||
+      "ffmpeg";
   }
 
   trigger(reason: ThumbnailReason = "manual"): ThumbnailTriggerResult {
