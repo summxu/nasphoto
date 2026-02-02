@@ -28,6 +28,7 @@ const elements = {
   galleryLoading: document.getElementById("gallery-loading"),
   galleryEmpty: document.getElementById("gallery-empty"),
   galleryError: document.getElementById("gallery-error"),
+  scrollIndicator: document.getElementById("scroll-indicator"),
   retryButton: document.getElementById("retry-button"),
   tabs: Array.from(document.querySelectorAll(".tab")),
   views: {
@@ -74,6 +75,8 @@ const overlayMap = {
   error: elements.galleryError,
 };
 
+let scrollIndicatorTimer = null;
+
 const updateOverlay = (stateName) => {
   elements.galleryOverlay.classList.toggle("is-active", Boolean(stateName));
   Object.values(overlayMap).forEach((node) => {
@@ -82,6 +85,69 @@ const updateOverlay = (stateName) => {
   if (stateName && overlayMap[stateName]) {
     overlayMap[stateName].classList.add("is-visible");
   }
+  if (stateName) {
+    hideScrollIndicator();
+  }
+};
+
+const formatScrollDate = (timeMs) => {
+  if (!Number.isFinite(timeMs) || timeMs <= 0) {
+    return "未知日期";
+  }
+  const date = new Date(timeMs);
+  if (Number.isNaN(date.getTime())) {
+    return "未知日期";
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1);
+  const day = String(date.getDate());
+  return `${year}年${month}月${day}日`;
+};
+
+const hideScrollIndicator = () => {
+  if (!elements.scrollIndicator) {
+    return;
+  }
+  elements.scrollIndicator.classList.remove("is-visible");
+};
+
+const showScrollIndicator = () => {
+  if (!elements.scrollIndicator) {
+    return;
+  }
+  elements.scrollIndicator.classList.add("is-visible");
+  if (scrollIndicatorTimer) {
+    clearTimeout(scrollIndicatorTimer);
+  }
+  scrollIndicatorTimer = setTimeout(() => {
+    hideScrollIndicator();
+  }, 700);
+};
+
+const updateScrollIndicator = () => {
+  if (
+    !elements.scrollIndicator ||
+    state.items.length === 0 ||
+    state.rowHeight <= 0 ||
+    state.columns <= 0
+  ) {
+    return;
+  }
+  const scroller = elements.galleryScroller;
+  const scrollTop = scroller.scrollTop;
+  const viewportHeight = scroller.clientHeight;
+  const anchor = scrollTop + Math.min(120, viewportHeight * 0.2);
+  const row = Math.max(0, Math.floor(anchor / state.rowHeight));
+  const index = Math.min(state.items.length - 1, row * state.columns);
+  const item = state.items[index];
+  if (!item) {
+    return;
+  }
+  const label = formatScrollDate(item.timeMs);
+  if (elements.scrollIndicator.textContent !== label) {
+    elements.scrollIndicator.textContent = label;
+  }
+  showScrollIndicator();
 };
 
 const syncGridMetrics = () => {
@@ -313,6 +379,7 @@ const setActiveTab = (tabName) => {
     }
   } else {
     setTopbarMeta("");
+    hideScrollIndicator();
   }
 };
 
@@ -673,7 +740,10 @@ const setupServiceWorker = async () => {
 };
 
 const setupEvents = () => {
-  elements.galleryScroller.addEventListener("scroll", () => scheduleRender());
+  elements.galleryScroller.addEventListener("scroll", () => {
+    scheduleRender();
+    updateScrollIndicator();
+  });
   window.addEventListener("resize", updateLayout);
 
   elements.galleryItems.addEventListener("click", (event) => {
