@@ -345,6 +345,7 @@ const updateLayout = () => {
   if (!scroller) {
     return;
   }
+  const shouldStickToBottom = !state.initialScrollDone || isNearBottom();
   syncGridMetrics();
   const width = scroller.clientWidth;
   const usable = Math.max(0, width - state.edge * 2);
@@ -364,8 +365,13 @@ const updateLayout = () => {
   if (state.rowCount > 0) {
     totalHeight = state.rowCount * state.rowHeight - state.gap + state.edge * 2;
   }
+  const contentHeight = Math.max(0, totalHeight);
+  const viewportHeight = elements.galleryScroller.clientHeight;
   elements.gallerySpacer.style.height = `calc(100vh - 133px)`;
-  elements.galleryItems.style.height = `${Math.max(0, totalHeight)}px`;
+  elements.galleryItems.style.height = `${contentHeight}px`;
+  if (shouldStickToBottom) {
+    scrollToBottom();
+  }
   scheduleRender(true);
 };
 
@@ -458,11 +464,18 @@ const createTile = (index) => {
   return button;
 };
 
+const getMaxScrollTop = () => {
+  const scroller = elements.galleryScroller;
+  return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+};
+
+const isNearBottom = () => {
+  const scroller = elements.galleryScroller;
+  return getMaxScrollTop() - scroller.scrollTop <= 2;
+};
+
 const scrollToBottom = () => {
-  const totalHeight = elements.gallerySpacer.offsetHeight;
-  const viewportHeight = elements.galleryScroller.clientHeight;
-  const maxScroll = Math.max(0, totalHeight - viewportHeight);
-  elements.galleryScroller.scrollTop = maxScroll;
+  elements.galleryScroller.scrollTop = getMaxScrollTop();
 };
 
 const setTopbarMeta = (text) => {
