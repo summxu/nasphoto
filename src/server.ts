@@ -7,6 +7,7 @@ import { openDatabase } from "./db";
 import { createLogger } from "./logger";
 import { MediaScanner } from "./scanner";
 import { ThumbnailService, buildThumbnailPath } from "./thumbnails";
+import exifr from "exifr";
 
 const normalizePathKey = (value: string): string => {
   const resolved = path.resolve(value);
@@ -98,6 +99,61 @@ const parseRangeHeader = (
   }
 
   return { start: rangeStart, end: Math.min(rangeEnd, size - 1) };
+};
+
+const normalizeExifValue = (value: unknown): string | number | boolean | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (Buffer.isBuffer(value)) {
+    return `Binary(${value.length} bytes)`;
+  }
+  if (Array.isArray(value)) {
+    const mapped = value
+      .slice(0, 32)
+      .map((item) => normalizeExifValue(item))
+      .filter((item) => item !== null)
+      .join(", ");
+    return value.length > 32 ? `${mapped} ... (${value.length})` : mapped;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .slice(0, 16)
+      .map(([key, val]) => `${key}: ${normalizeExifValue(val)}`)
+      .join("; ");
+    return entries || String(value);
+  }
+  return String(value);
+};
+
+const sanitizeExif = (
+  exif: Record<string, unknown> | null,
+): Record<string, string | number | boolean> => {
+  if (!exif) {
+    return {};
+  }
+  const sanitized: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(exif)) {
+    const normalized = normalizeExifValue(value);
+    if (normalized === null || normalized === "") {
+      continue;
+    }
+    if (typeof normalized === "string" && normalized.length > 800) {
+      sanitized[key] = `${normalized.slice(0, 800)}…`;
+      continue;
+    }
+    sanitized[key] = normalized;
+  }
+  return sanitized;
 };
 
 const sendFileStream = async (
@@ -206,6 +262,25 @@ const mediaStatements = {
   byId: db.prepare(
     "SELECT id, root, rel_path, media_type, thumbnail_path FROM media_items WHERE id = ?",
   ),
+  detail: db.prepare(`
+    SELECT
+      id,
+      root,
+      rel_path,
+      dir_path,
+      file_name,
+      extension,
+      media_type,
+      size_bytes,
+      mtime_ms,
+      ctime_ms,
+      exif_time_ms,
+      taken_time_ms,
+      media_create_time_ms,
+      primary_time_ms
+    FROM media_items
+    WHERE id = ?
+  `),
 };
 
 const server = new HyperExpress.Server();
@@ -299,6 +374,83 @@ server.get("/api/media", (req: Request, res: Response) => {
   }));
 
   res.header("Cache-Control", "no-store").json({ total, items });
+});
+
+server.get("/api/media/:id/exif", async (req: Request, res: Response) => {
+  const rawId = req.path_parameters.id;
+  const id = Number(rawId);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+
+  type MediaDetailRow = {
+    id: number;
+    root: string;
+    rel_path: string;
+    dir_path: string;
+    file_name: string;
+    extension: string;
+    media_type: "image" | "video";
+    size_bytes: number;
+    mtime_ms: number;
+    ctime_ms: number;
+    exif_time_ms: number | null;
+    taken_time_ms: number | null;
+    media_create_time_ms: number | null;
+    primary_time_ms: number | null;
+  };
+
+  const row = mediaStatements.detail.get(id) as MediaDetailRow | undefined;
+  if (!row) {
+    res.status(404).send();
+    return;
+  }
+
+  const filePath = path.resolve(row.root, toFsPathFromPosix(row.rel_path));
+  if (!isPathInside(row.root, filePath)) {
+    res.status(404).send();
+    return;
+  }
+
+  let exif: Record<string, unknown> | null = null;
+  let gps: { latitude?: number; longitude?: number; altitude?: number } | null =
+    null;
+  if (row.media_type === "image") {
+    try {
+      exif = (await exifr.parse(filePath)) as Record<string, unknown> | null;
+    } catch (error) {
+      logger.warn("[exif] parse failed", { id, error: String(error) });
+    }
+    try {
+      const gpsResult = (await exifr.gps(filePath)) as
+        | { latitude?: number; longitude?: number; altitude?: number }
+        | null;
+      if (gpsResult && Number.isFinite(gpsResult.latitude ?? NaN)) {
+        gps = gpsResult;
+      }
+    } catch (error) {
+      logger.warn("[exif] gps parse failed", { id, error: String(error) });
+    }
+  }
+
+  res.header("Cache-Control", "no-store").json({
+    id: row.id,
+    mediaType: row.media_type,
+    fileName: row.file_name,
+    relPath: row.rel_path,
+    dirPath: row.dir_path,
+    extension: row.extension,
+    sizeBytes: row.size_bytes,
+    mtimeMs: row.mtime_ms,
+    ctimeMs: row.ctime_ms,
+    exifTimeMs: row.exif_time_ms,
+    takenTimeMs: row.taken_time_ms,
+    mediaCreateTimeMs: row.media_create_time_ms,
+    primaryTimeMs: row.primary_time_ms,
+    exif: sanitizeExif(exif),
+    gps,
+  });
 });
 
 server.get("/media/thumb/:id", async (req: Request, res: Response) => {

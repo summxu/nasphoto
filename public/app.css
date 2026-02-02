@@ -419,6 +419,23 @@ body::before {
     z-index: 3;
 }
 
+.viewer-info {
+    position: absolute;
+    top: 18px;
+    left: 20px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    z-index: 3;
+}
+
 .viewer-nav {
     position: absolute;
     top: 50%;
@@ -445,6 +462,121 @@ body::before {
 
 .viewer-nav:disabled {
     opacity: 0.3;
+}
+
+.action-sheet {
+    position: fixed;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+    z-index: 30;
+}
+
+.action-sheet.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.action-sheet-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+.action-sheet.is-visible .action-sheet-backdrop {
+    opacity: 1;
+}
+
+.action-sheet-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 70vh;
+    background: #f7f7f7;
+    border-radius: 20px 20px 0 0;
+    transform: translateY(100%);
+    transition: transform 0.25s ease;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.action-sheet.is-visible .action-sheet-panel {
+    transform: translateY(0);
+}
+
+.action-sheet-handle {
+    width: 44px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(60, 60, 67, 0.2);
+    margin: 10px auto 6px;
+}
+
+.action-sheet-title {
+    font-size: 15px;
+    font-weight: 700;
+    text-align: center;
+    color: #111;
+    padding: 4px 16px 10px;
+    border-bottom: 1px solid rgba(60, 60, 67, 0.12);
+}
+
+.action-sheet-body {
+    padding: 12px 16px calc(20px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: grid;
+    gap: 10px;
+}
+
+.exif-section {
+    background: #fff;
+    border-radius: 14px;
+    padding: 12px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+.exif-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111;
+    margin-bottom: 8px;
+}
+
+.exif-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: #1c1c1e;
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(60, 60, 67, 0.12);
+}
+
+.exif-row:last-child {
+    border-bottom: none;
+}
+
+.exif-label {
+    color: #6b6b70;
+    min-width: 88px;
+}
+
+.exif-value {
+    text-align: right;
+    word-break: break-all;
+}
+
+.exif-map {
+    width: 100%;
+    border: none;
+    border-radius: 12px;
+    height: 180px;
 }
 
 body.viewer-open {

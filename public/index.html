@@ -113,6 +113,9 @@
 <div class="viewer" id="viewer" aria-hidden="true">
     <div class="viewer-backdrop" id="viewer-backdrop"></div>
     <div class="viewer-content">
+        <button class="viewer-info" id="viewer-info" type="button" aria-label="信息">
+            i
+        </button>
         <button class="viewer-close" id="viewer-close" type="button" aria-label="关闭">
             ×
         </button>
@@ -123,6 +126,14 @@
         <button class="viewer-nav viewer-next" id="viewer-next" type="button" aria-label="下一张">
             ›
         </button>
+    </div>
+</div>
+
+<div class="action-sheet" id="exif-sheet" aria-hidden="true">
+    <div class="action-sheet-backdrop" id="exif-sheet-backdrop"></div>
+    <div class="action-sheet-panel">
+        <div class="action-sheet-title">EXIF 详情</div>
+        <div class="action-sheet-body" id="exif-content"></div>
     </div>
 </div>
 

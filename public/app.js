@@ -15,6 +15,7 @@ const state = {
   viewerIndex: -1,
   preloadCache: new Set(),
   initialScrollDone: false,
+  exifCache: new Map(),
 };
 
 const elements = {
@@ -41,9 +42,13 @@ const elements = {
   viewerBackdrop: document.getElementById("viewer-backdrop"),
   viewerStage: document.getElementById("viewer-stage"),
   viewerTrack: null,
+  viewerInfo: document.getElementById("viewer-info"),
   viewerClose: document.getElementById("viewer-close"),
   viewerPrev: document.getElementById("viewer-prev"),
   viewerNext: document.getElementById("viewer-next"),
+  exifSheet: document.getElementById("exif-sheet"),
+  exifSheetBackdrop: document.getElementById("exif-sheet-backdrop"),
+  exifContent: document.getElementById("exif-content"),
 };
 
 const DEFAULT_PWA_CONFIG = {
@@ -102,6 +107,176 @@ const formatScrollDate = (timeMs) => {
   const month = String(date.getMonth() + 1);
   const day = String(date.getDate());
   return `${year}年${month}月${day}日`;
+};
+
+const formatDateTime = (timeMs) => {
+  if (!Number.isFinite(timeMs) || timeMs <= 0) {
+    return "未知";
+  }
+  const date = new Date(timeMs);
+  if (Number.isNaN(date.getTime())) {
+    return "未知";
+  }
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
+
+const formatBytes = (size) => {
+  if (!Number.isFinite(size) || size <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = size;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+};
+
+const buildBaiduMapUrl = (latitude, longitude) => {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return "";
+  }
+  return `https://www.bing.com/maps/embed?h=180&w=800&cp=${lat}~${lng}&lvl=20&typ=d&sty=r`
+  // return `https://map.baidu.com/?latlng=${lat},${lng}&title=${safeTitle}&content=${safeTitle}&output=embed`;
+};
+
+const createExifRow = (label, value) => {
+  const row = document.createElement("div");
+  row.className = "exif-row";
+  const name = document.createElement("div");
+  name.className = "exif-label";
+  name.textContent = label;
+  const content = document.createElement("div");
+  content.className = "exif-value";
+  content.textContent = value ?? "未知";
+  row.appendChild(name);
+  row.appendChild(content);
+  return row;
+};
+
+const createExifSection = (title) => {
+  const section = document.createElement("div");
+  section.className = "exif-section";
+  const heading = document.createElement("div");
+  heading.className = "exif-section-title";
+  heading.textContent = title;
+  section.appendChild(heading);
+  return section;
+};
+
+const setExifLoading = (text) => {
+  if (!elements.exifContent) {
+    return;
+  }
+  elements.exifContent.innerHTML = "";
+  const section = createExifSection("加载中");
+  section.appendChild(createExifRow("状态", text));
+  elements.exifContent.appendChild(section);
+};
+
+const closeExifSheet = () => {
+  if (!elements.exifSheet) {
+    return;
+  }
+  elements.exifSheet.classList.remove("is-visible");
+  elements.exifSheet.setAttribute("aria-hidden", "true");
+};
+
+const openExifSheet = () => {
+  if (!elements.exifSheet) {
+    return;
+  }
+  elements.exifSheet.classList.add("is-visible");
+  elements.exifSheet.setAttribute("aria-hidden", "false");
+};
+
+const renderExifSheet = (data) => {
+  if (!elements.exifContent) {
+    return;
+  }
+  elements.exifContent.innerHTML = "";
+
+  const base = createExifSection("基础信息");
+  base.appendChild(createExifRow("文件名", data.fileName));
+  base.appendChild(createExifRow("类型", data.mediaType));
+  base.appendChild(createExifRow("大小", formatBytes(data.sizeBytes)));
+  base.appendChild(createExifRow("路径", data.relPath));
+  base.appendChild(createExifRow("文件修改", formatDateTime(data.mtimeMs)));
+  base.appendChild(createExifRow("文件创建", formatDateTime(data.ctimeMs)));
+  base.appendChild(createExifRow("拍摄时间", formatDateTime(data.takenTimeMs)));
+  base.appendChild(createExifRow("EXIF时间", formatDateTime(data.exifTimeMs)));
+  base.appendChild(createExifRow("媒体创建", formatDateTime(data.mediaCreateTimeMs)));
+  elements.exifContent.appendChild(base);
+
+  if (data.gps && Number.isFinite(data.gps.latitude)) {
+    const mapSection = createExifSection("地图位置");
+    mapSection.appendChild(
+      createExifRow(
+        "坐标",
+        `${data.gps.latitude.toFixed(6)}, ${data.gps.longitude.toFixed(6)}`,
+      ),
+    );
+    if (Number.isFinite(data.gps.altitude)) {
+      mapSection.appendChild(createExifRow("海拔", `${data.gps.altitude} m`));
+    }
+    const iframe = document.createElement("iframe");
+    iframe.className = "exif-map";
+    iframe.loading = "lazy";
+    iframe.referrerPolicy = "no-referrer-when-downgrade";
+    iframe.src = buildBaiduMapUrl(
+      data.gps.latitude,
+      data.gps.longitude
+    );
+    iframe.width = "100%";
+    mapSection.appendChild(iframe);
+    elements.exifContent.appendChild(mapSection);
+  }
+
+  const exifEntries = data.exif ? Object.entries(data.exif) : [];
+  if (exifEntries.length > 0) {
+    const exifSection = createExifSection("EXIF字段");
+    exifEntries
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([key, value]) => {
+        exifSection.appendChild(createExifRow(key, String(value)));
+      });
+    elements.exifContent.appendChild(exifSection);
+  }
+};
+
+const loadExifForCurrent = async () => {
+  if (state.viewerIndex < 0 || state.viewerIndex >= state.items.length) {
+    return;
+  }
+  const item = state.items[state.viewerIndex];
+  if (!item) {
+    return;
+  }
+  const cached = state.exifCache.get(item.id);
+  if (cached) {
+    renderExifSheet(cached);
+    return;
+  }
+  setExifLoading("读取中...");
+  try {
+    const data = await fetchJson(`/api/media/${item.id}/exif`);
+    state.exifCache.set(item.id, data);
+    renderExifSheet(data);
+  } catch (error) {
+    console.error(error);
+    setExifLoading("读取失败");
+  }
 };
 
 const hideScrollIndicator = () => {
@@ -308,6 +483,7 @@ const loadMedia = async () => {
   state.total = 0;
   state.visible.forEach((node) => node.remove());
   state.visible.clear();
+  state.exifCache.clear();
   state.initialScrollDone = false;
   updateLayout();
 
@@ -391,6 +567,7 @@ const openViewer = (index) => {
   elements.viewer.classList.add("is-visible");
   elements.viewer.setAttribute("aria-hidden", "false");
   document.body.classList.add("viewer-open");
+  closeExifSheet();
   renderViewer();
 };
 
@@ -401,6 +578,7 @@ const closeViewer = () => {
   elements.viewerTrack = null;
   document.body.classList.remove("viewer-open");
   state.viewerIndex = -1;
+  closeExifSheet();
   resetViewerTransforms({ keepBackdrop: true });
 };
 
@@ -429,6 +607,8 @@ const createViewerMedia = (item) => {
     video.playsInline = true;
     video.preload = "metadata";
     video.src = item.originalUrl;
+    video.autoplay = true;
+    video.loop = true;
     return video;
   }
 
@@ -472,6 +652,9 @@ const renderViewer = () => {
 
   resetViewerTransforms();
   preloadNearby(index);
+  if (elements.exifSheet?.classList.contains("is-visible")) {
+    loadExifForCurrent();
+  }
 };
 
 const preloadNearby = (index) => {
@@ -761,13 +944,29 @@ const setupEvents = () => {
   elements.viewerBackdrop.addEventListener("click", closeViewer);
   elements.viewerPrev.addEventListener("click", showPrev);
   elements.viewerNext.addEventListener("click", showNext);
+  elements.viewerInfo.addEventListener("click", () => {
+    if (state.viewerIndex === -1) {
+      return;
+    }
+    if (elements.exifSheet?.classList.contains("is-visible")) {
+      closeExifSheet();
+      return;
+    }
+    openExifSheet();
+    loadExifForCurrent();
+  });
+  elements.exifSheetBackdrop.addEventListener("click", closeExifSheet);
 
   document.addEventListener("keydown", (event) => {
     if (state.viewerIndex === -1) {
       return;
     }
     if (event.key === "Escape") {
-      closeViewer();
+      if (elements.exifSheet?.classList.contains("is-visible")) {
+        closeExifSheet();
+      } else {
+        closeViewer();
+      }
     }
     if (event.key === "ArrowLeft") {
       showPrev();
