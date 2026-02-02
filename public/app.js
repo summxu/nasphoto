@@ -89,7 +89,7 @@ const updateLayout = () => {
   if (state.rowCount > 0) {
     totalHeight = state.rowCount * state.rowHeight - state.gap + state.edge * 2;
   }
-  elements.gallerySpacer.style.height = `${Math.max(0, totalHeight)}px`;
+  elements.gallerySpacer.style.height = `calc(100vh - 133px)`;
   elements.galleryItems.style.height = `${Math.max(0, totalHeight)}px`;
   scheduleRender(true);
 };
