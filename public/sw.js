@@ -14,6 +14,8 @@ const CORE_ASSETS = [
   "/index.html",
   "/app.css",
   "/app.js",
+  "/folders.js",
+  "/folders.html",
   "/manifest.webmanifest",
   "/icon.svg",
   "/icon-maskable.svg",

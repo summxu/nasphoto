@@ -12,9 +12,13 @@ const state = {
   overscan: 3,
   visible: new Map(),
   renderQueued: false,
-  viewerIndex: -1,
-  preloadCache: new Set(),
   initialScrollDone: false,
+};
+
+const viewerState = {
+  items: [],
+  index: -1,
+  preloadCache: new Set(),
   exifCache: new Map(),
 };
 
@@ -22,6 +26,9 @@ const elements = {
   topbarTitle: document.getElementById("topbar-title"),
   topbarMeta: document.getElementById("topbar-meta"),
   refreshButton: document.getElementById("refresh-button"),
+  folderActionButton: document.getElementById("folder-action-button"),
+  folderCancelButton: document.getElementById("folder-cancel-button"),
+  folderDeleteButton: document.getElementById("folder-delete-button"),
   galleryScroller: document.getElementById("gallery-scroller"),
   gallerySpacer: document.getElementById("gallery-spacer"),
   galleryItems: document.getElementById("gallery-items"),
@@ -81,6 +88,66 @@ const overlayMap = {
 };
 
 let scrollIndicatorTimer = null;
+let activeTab = "gallery";
+
+const toggleElement = (el, show) => {
+  if (!el) {
+    return;
+  }
+  el.style.display = show ? "" : "none";
+};
+
+const setTopbarActions = (mode, hasSelection = false) => {
+  if (mode === "gallery") {
+    toggleElement(elements.refreshButton, true);
+    toggleElement(elements.folderActionButton, false);
+    toggleElement(elements.folderCancelButton, false);
+    toggleElement(elements.folderDeleteButton, false);
+    return;
+  }
+  if (mode === "folders") {
+    toggleElement(elements.refreshButton, false);
+    toggleElement(elements.folderActionButton, true);
+    toggleElement(elements.folderCancelButton, false);
+    toggleElement(elements.folderDeleteButton, false);
+    if (elements.folderDeleteButton) {
+      elements.folderDeleteButton.disabled = true;
+    }
+    return;
+  }
+  if (mode === "folders-select") {
+    toggleElement(elements.refreshButton, false);
+    toggleElement(elements.folderActionButton, false);
+    toggleElement(elements.folderCancelButton, true);
+    toggleElement(elements.folderDeleteButton, true);
+    if (elements.folderDeleteButton) {
+      elements.folderDeleteButton.disabled = !hasSelection;
+    }
+    return;
+  }
+
+  toggleElement(elements.refreshButton, false);
+  toggleElement(elements.folderActionButton, false);
+  toggleElement(elements.folderCancelButton, false);
+  toggleElement(elements.folderDeleteButton, false);
+};
+
+window.NasPhotoTopbar = {
+  setMeta: (text) => setTopbarMeta(text),
+  setTitle: (text) => {
+    if (elements.topbarTitle) {
+      elements.topbarTitle.textContent = text;
+    }
+  },
+  setFolderActionMode: (mode, hasSelection = false) => {
+    if (mode === "select") {
+      setTopbarActions("folders-select", hasSelection);
+    } else if (mode === "default") {
+      setTopbarActions("folders");
+    }
+  },
+  isFoldersTab: () => activeTab === "folders",
+};
 
 const updateOverlay = (stateName) => {
   elements.galleryOverlay.classList.toggle("is-active", Boolean(stateName));
@@ -253,14 +320,14 @@ const renderExifSheet = (data) => {
 };
 
 const loadExifForCurrent = async () => {
-  if (state.viewerIndex < 0 || state.viewerIndex >= state.items.length) {
+  if (viewerState.index < 0 || viewerState.index >= viewerState.items.length) {
     return;
   }
-  const item = state.items[state.viewerIndex];
+  const item = viewerState.items[viewerState.index];
   if (!item) {
     return;
   }
-  const cached = state.exifCache.get(item.id);
+  const cached = viewerState.exifCache.get(item.id);
   if (cached) {
     renderExifSheet(cached);
     return;
@@ -268,7 +335,7 @@ const loadExifForCurrent = async () => {
   setExifLoading("读取中...");
   try {
     const data = await fetchJson(`/api/media/${item.id}/exif`);
-    state.exifCache.set(item.id, data);
+    viewerState.exifCache.set(item.id, data);
     renderExifSheet(data);
   } catch (error) {
     console.error(error);
@@ -493,7 +560,7 @@ const loadMedia = async () => {
   state.total = 0;
   state.visible.forEach((node) => node.remove());
   state.visible.clear();
-  state.exifCache.clear();
+  viewerState.exifCache.clear();
   state.initialScrollDone = false;
   updateLayout();
 
@@ -542,6 +609,7 @@ const loadMedia = async () => {
 };
 
 const setActiveTab = (tabName) => {
+  activeTab = tabName;
   elements.tabs.forEach((tab) => {
     const isActive = tab.dataset.tab === tabName;
     tab.classList.toggle("is-active", isActive);
@@ -560,20 +628,28 @@ const setActiveTab = (tabName) => {
   };
   elements.topbarTitle.textContent = titles[tabName] || "图库";
   if (tabName === "gallery") {
+    setTopbarActions("gallery");
     if (state.items.length > 0) {
       setTopbarMeta(`共 ${state.items.length} 张`);
     }
+  } else if (tabName === "folders") {
+    setTopbarActions("folders");
+    setTopbarMeta("");
+    hideScrollIndicator();
+    window.FolderView?.activate?.();
   } else {
+    setTopbarActions("hidden");
     setTopbarMeta("");
     hideScrollIndicator();
   }
 };
 
-const openViewer = (index) => {
-  if (index < 0 || index >= state.items.length) {
+const openViewer = (items, index) => {
+  if (!Array.isArray(items) || index < 0 || index >= items.length) {
     return;
   }
-  state.viewerIndex = index;
+  viewerState.items = items;
+  viewerState.index = index;
   elements.viewer.classList.add("is-visible");
   elements.viewer.setAttribute("aria-hidden", "false");
   document.body.classList.add("viewer-open");
@@ -587,7 +663,8 @@ const closeViewer = () => {
   elements.viewerStage.innerHTML = "";
   elements.viewerTrack = null;
   document.body.classList.remove("viewer-open");
-  state.viewerIndex = -1;
+  viewerState.index = -1;
+  viewerState.items = [];
   closeExifSheet();
   resetViewerTransforms({ keepBackdrop: true });
 };
@@ -632,18 +709,18 @@ const createViewerMedia = (item) => {
 const createViewerSlide = (index) => {
   const slide = document.createElement("div");
   slide.className = "viewer-slide";
-  if (index < 0 || index >= state.items.length) {
+  if (index < 0 || index >= viewerState.items.length) {
     slide.classList.add("is-empty");
     return slide;
   }
-  const item = state.items[index];
+  const item = viewerState.items[index];
   slide.appendChild(createViewerMedia(item));
   return slide;
 };
 
 const renderViewer = () => {
-  const index = state.viewerIndex;
-  const item = state.items[index];
+  const index = viewerState.index;
+  const item = viewerState.items[index];
   if (!item) {
     return;
   }
@@ -658,7 +735,7 @@ const renderViewer = () => {
   elements.viewerTrack = track;
 
   elements.viewerPrev.disabled = index <= 0;
-  elements.viewerNext.disabled = index >= state.items.length - 1;
+  elements.viewerNext.disabled = index >= viewerState.items.length - 1;
 
   resetViewerTransforms();
   preloadNearby(index);
@@ -673,32 +750,32 @@ const preloadNearby = (index) => {
       continue;
     }
     const target = index + offset;
-    if (target < 0 || target >= state.items.length) {
+    if (target < 0 || target >= viewerState.items.length) {
       continue;
     }
-    const item = state.items[target];
+    const item = viewerState.items[target];
     if (item.mediaType !== "image") {
       continue;
     }
-    if (state.preloadCache.has(item.originalUrl)) {
+    if (viewerState.preloadCache.has(item.originalUrl)) {
       continue;
     }
     const img = new Image();
     img.src = item.originalUrl;
-    state.preloadCache.add(item.originalUrl);
+    viewerState.preloadCache.add(item.originalUrl);
   }
 };
 
 const showPrev = () => {
-  if (state.viewerIndex > 0) {
-    state.viewerIndex -= 1;
+  if (viewerState.index > 0) {
+    viewerState.index -= 1;
     renderViewer();
   }
 };
 
 const showNext = () => {
-  if (state.viewerIndex < state.items.length - 1) {
-    state.viewerIndex += 1;
+  if (viewerState.index < viewerState.items.length - 1) {
+    viewerState.index += 1;
     renderViewer();
   }
 };
@@ -754,7 +831,7 @@ const setupViewerGestures = () => {
     if (event.pointerType === "mouse" && event.button !== 0) {
       return;
     }
-    if (state.viewerIndex === -1) {
+    if (viewerState.index === -1) {
       return;
     }
     const { width, height } = getStageSize();
@@ -797,8 +874,8 @@ const setupViewerGestures = () => {
     event.preventDefault();
 
     if (viewerGesture.mode === "horizontal") {
-      const atStart = state.viewerIndex <= 0;
-      const atEnd = state.viewerIndex >= state.items.length - 1;
+      const atStart = viewerState.index <= 0;
+      const atEnd = viewerState.index >= viewerState.items.length - 1;
       let offsetX = deltaX;
       if ((atStart && deltaX > 0) || (atEnd && deltaX < 0)) {
         offsetX = deltaX * 0.35;
@@ -834,12 +911,12 @@ const setupViewerGestures = () => {
 
     if (viewerGesture.mode === "horizontal") {
       const threshold = width * VIEWER_SWIPE_RATIO;
-      const atStart = state.viewerIndex <= 0;
-      const atEnd = state.viewerIndex >= state.items.length - 1;
+      const atStart = viewerState.index <= 0;
+      const atEnd = viewerState.index >= viewerState.items.length - 1;
 
       if ((deltaX > threshold || velocityX > VIEWER_SWIPE_VELOCITY) && !atStart) {
         animateTrackTo(0, () => {
-          state.viewerIndex -= 1;
+          viewerState.index -= 1;
           renderViewer();
         });
       } else if (
@@ -847,7 +924,7 @@ const setupViewerGestures = () => {
         !atEnd
       ) {
         animateTrackTo(-2 * width, () => {
-          state.viewerIndex += 1;
+          viewerState.index += 1;
           renderViewer();
         });
       } else {
@@ -946,7 +1023,7 @@ const setupEvents = () => {
     }
     const index = Number(target.dataset.index);
     if (Number.isFinite(index)) {
-      openViewer(index);
+      openViewer(state.items, index);
     }
   });
 
@@ -955,7 +1032,7 @@ const setupEvents = () => {
   elements.viewerPrev.addEventListener("click", showPrev);
   elements.viewerNext.addEventListener("click", showNext);
   elements.viewerInfo.addEventListener("click", () => {
-    if (state.viewerIndex === -1) {
+    if (viewerState.index === -1) {
       return;
     }
     if (elements.exifSheet?.classList.contains("is-visible")) {
@@ -968,7 +1045,7 @@ const setupEvents = () => {
   elements.exifSheetBackdrop.addEventListener("click", closeExifSheet);
 
   document.addEventListener("keydown", (event) => {
-    if (state.viewerIndex === -1) {
+    if (viewerState.index === -1) {
       return;
     }
     if (event.key === "Escape") {
@@ -996,7 +1073,15 @@ const setupEvents = () => {
   });
 
   elements.retryButton.addEventListener("click", loadMedia);
-  elements.refreshButton.addEventListener("click", loadMedia);
+  elements.refreshButton.addEventListener("click", () => {
+    if (activeTab === "folders" && window.FolderView?.refresh) {
+      window.FolderView.refresh();
+      return;
+    }
+    if (activeTab === "gallery") {
+      loadMedia();
+    }
+  });
 
   setupViewerGestures();
 };
@@ -1007,6 +1092,12 @@ const init = async () => {
   setupEvents();
   setupServiceWorker();
   await loadMedia();
+};
+
+window.NasPhotoViewer = {
+  open: (items, index) => openViewer(items, index),
+  close: () => closeViewer(),
+  isOpen: () => viewerState.index !== -1,
 };
 
 init();

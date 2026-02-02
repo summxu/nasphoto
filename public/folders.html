@@ -1,0 +1,86 @@
+<div class="folder-view" id="folder-view">
+  <button class="folder-back" id="folder-back" type="button">上级</button>
+  <div class="gallery-scroller" id="folder-scroller">
+    <div class="gallery-spacer" id="folder-spacer" aria-hidden="true"></div>
+    <div class="gallery-items" id="folder-items" role="list"></div>
+  </div>
+  <div class="gallery-overlay" id="folder-overlay">
+    <div class="gallery-loading" id="folder-loading">
+      <div class="spinner"></div>
+      <div class="loading-text" id="folder-loading-text">正在加载目录</div>
+    </div>
+    <div class="gallery-empty" id="folder-empty">
+      <div class="empty-title">当前目录为空</div>
+      <div class="empty-sub">可以新建文件夹或上传文件</div>
+    </div>
+    <div class="gallery-error" id="folder-error">
+      <div class="error-title">加载失败</div>
+      <div class="error-sub">请检查服务是否已启动</div>
+      <button class="retry-button" id="folder-retry" type="button">
+        重试
+      </button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="folder-upload-input" multiple hidden />
+
+<div class="action-sheet" id="folder-action-sheet" aria-hidden="true">
+  <div class="action-sheet-backdrop" data-action="close"></div>
+  <div class="action-sheet-panel">
+    <div class="action-sheet-handle"></div>
+    <div class="action-sheet-title">文件夹操作</div>
+    <div class="action-sheet-body">
+      <button class="sheet-option" data-action="new">新建文件夹</button>
+      <button class="sheet-option" data-action="upload">上传文件</button>
+      <button class="sheet-option" data-action="select">选择</button>
+    </div>
+  </div>
+</div>
+
+<div class="action-sheet" id="folder-create-sheet" aria-hidden="true">
+  <div class="action-sheet-backdrop" data-action="close"></div>
+  <div class="action-sheet-panel">
+    <div class="action-sheet-handle"></div>
+    <div class="action-sheet-title">新建文件夹</div>
+    <div class="action-sheet-body">
+      <div class="sheet-field">
+        <label class="sheet-label" for="folder-create-input">文件夹名称</label>
+        <input
+          class="sheet-input"
+          id="folder-create-input"
+          type="text"
+          placeholder="请输入名称"
+          maxlength="80"
+        />
+      </div>
+      <div class="sheet-actions">
+        <button class="sheet-button" id="folder-create-cancel" type="button">
+          取消
+        </button>
+        <button class="sheet-button is-primary" id="folder-create-confirm" type="button">
+          创建
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="action-sheet" id="folder-delete-sheet" aria-hidden="true">
+  <div class="action-sheet-backdrop" data-action="close"></div>
+  <div class="action-sheet-panel">
+    <div class="action-sheet-handle"></div>
+    <div class="action-sheet-title">确认删除</div>
+    <div class="action-sheet-body">
+      <div class="confirm-text" id="folder-delete-text">确认删除所选内容？</div>
+      <div class="sheet-actions">
+        <button class="sheet-button" id="folder-delete-cancel" type="button">
+          取消
+        </button>
+        <button class="sheet-button is-danger" id="folder-delete-confirm" type="button">
+          删除
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

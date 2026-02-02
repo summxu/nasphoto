@@ -1,12 +1,13 @@
 import path from "node:path";
 import fs from "node:fs";
+import type { Dirent } from "node:fs";
 import fsPromises from "node:fs/promises";
 import HyperExpress, { type Request, type Response } from "hyper-express";
 import { CONFIG_PATH, loadConfig, type PwaConfig } from "./config";
 import { openDatabase } from "./db";
 import { createLogger } from "./logger";
 import { MediaScanner } from "./scanner";
-import { ThumbnailService, buildThumbnailPath } from "./thumbnails";
+import { ThumbnailService, buildThumbnailPath, type ThumbnailItem } from "./thumbnails";
 import exifr from "exifr";
 
 const normalizePathKey = (value: string): string => {
@@ -25,6 +26,41 @@ const isPathInside = (root: string, target: string): boolean => {
 };
 
 const toFsPathFromPosix = (value: string): string => value.split("/").join(path.sep);
+const toPosixPath = (value: string): string => value.split(path.sep).join("/");
+
+const normalizeFolderPath = (value?: string): string | null => {
+  if (!value) {
+    return "/";
+  }
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    decoded = value;
+  }
+  let normalized = decoded.replace(/\\/g, "/").trim();
+  if (normalized === "") {
+    return "/";
+  }
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  normalized = path.posix.normalize(normalized);
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  if (normalized === "." || normalized === "/.") {
+    return "/";
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.includes("..")) {
+    return null;
+  }
+  return normalized;
+};
+
+const folderPathToRelative = (folderPath: string): string =>
+  folderPath.replace(/^\/+/, "");
 
 const parseQueryNumber = (
   value: string | undefined,
@@ -63,6 +99,7 @@ const MIME_BY_EXT: Record<string, string> = {
   ".m4v": "video/x-m4v",
   ".mkv": "video/x-matroska",
   ".avi": "video/x-msvideo",
+  ".3gp": "video/3gpp",
 };
 
 const getMimeType = (filePath: string): string | undefined => {
@@ -99,6 +136,46 @@ const parseRangeHeader = (
   }
 
   return { start: rangeStart, end: Math.min(rangeEnd, size - 1) };
+};
+
+const parseExifDate = (value: unknown): Date | null => {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3");
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+};
+
+const pickExifDate = (
+  exif: Record<string, unknown> | null,
+  keys: string[],
+): Date | null => {
+  if (!exif) {
+    return null;
+  }
+  for (const key of keys) {
+    const date = parseExifDate(exif[key]);
+    if (date) {
+      return date;
+    }
+  }
+  return null;
+};
+
+const buildDirPath = (relPosix: string): string => {
+  const dir = path.posix.dirname(relPosix);
+  return dir === "." ? "/" : `/${dir}`;
 };
 
 const normalizeExifValue = (value: unknown): string | number | boolean | null => {
@@ -231,9 +308,205 @@ const pickPwaConfig = (config: unknown): PwaConfig => {
   return { enabled: true, offlineCacheDays: 365, maxCacheEntries: 500 };
 };
 
+const getRootById = (rootId: number): string | null => {
+  if (!Number.isFinite(rootId)) {
+    return null;
+  }
+  const index = Math.floor(rootId);
+  if (index < 0 || index >= libraryRoots.length) {
+    return null;
+  }
+  return libraryRoots[index];
+};
+
+const getRootName = (rootId: number): string => rootNames[rootId] ?? "图库";
+
+const resolveFolderFsPath = (root: string, folderPath: string): string | null => {
+  const rel = folderPathToRelative(folderPath);
+  const resolved = path.resolve(root, rel);
+  if (!isPathInside(root, resolved)) {
+    return null;
+  }
+  return resolved;
+};
+
+const buildUniquePath = async (dirPath: string, fileName: string): Promise<string> => {
+  const parsed = path.parse(fileName);
+  let candidate = path.join(dirPath, fileName);
+  let counter = 1;
+  while (true) {
+    try {
+      await fsPromises.access(candidate);
+      const suffix = `_${counter}`;
+      candidate = path.join(dirPath, `${parsed.name}${suffix}${parsed.ext}`);
+      counter += 1;
+      if (counter > 200) {
+        throw new Error("too_many_duplicates");
+      }
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error) {
+        if ((error as { code?: string }).code === "ENOENT") {
+          return candidate;
+        }
+      }
+      if (error instanceof Error && error.message === "too_many_duplicates") {
+        throw error;
+      }
+      return candidate;
+    }
+  }
+};
+
+const removeThumbnailsForRelPath = async (relPath: string): Promise<void> => {
+  const sizes = Array.from(
+    new Set(
+      config.thumbnails.sizes
+        .map((size) => Math.floor(size))
+        .filter((size) => size > 0),
+    ),
+  );
+  const targetSizes = sizes.length > 0 ? sizes : [256];
+  await Promise.all(
+    targetSizes.map((size) =>
+      fsPromises.rm(buildThumbnailPath(config, relPath, size), { force: true }),
+    ),
+  );
+};
+
+const indexMediaFile = async (
+  root: string,
+  fullPath: string,
+): Promise<{ id: number | null; item: ThumbnailItem }> => {
+  const extension = path.extname(fullPath).toLowerCase();
+  const mediaType = getMediaType(extension);
+  if (!mediaType) {
+    throw new Error("unsupported_media_type");
+  }
+
+  const stats = await fsPromises.stat(fullPath);
+  const relPath = toPosixPath(path.relative(root, fullPath));
+  if (relPath.startsWith("..")) {
+    throw new Error("outside_root");
+  }
+
+  const sizeBytes = stats.size;
+  const mtimeMs = Math.floor(stats.mtimeMs);
+  const ctimeMs = Math.floor(
+    stats.birthtimeMs && stats.birthtimeMs > 0
+      ? stats.birthtimeMs
+      : stats.ctimeMs || stats.mtimeMs,
+  );
+
+  let exif: Record<string, unknown> | null = null;
+  if (mediaType === "image") {
+    try {
+      exif = (await exifr.parse(fullPath, {
+        pick: [
+          "DateTimeOriginal",
+          "DateTimeDigitized",
+          "CreateDate",
+          "MediaCreateDate",
+          "ModifyDate",
+        ],
+      })) as Record<string, unknown> | null;
+    } catch (error) {
+      logger.warn("[upload] exif parse failed", { path: fullPath, error: String(error) });
+    }
+  }
+
+  const exifOriginal = pickExifDate(exif, [
+    "DateTimeOriginal",
+    "DateTimeDigitized",
+  ]);
+  const exifCreate = pickExifDate(exif, [
+    "CreateDate",
+    "MediaCreateDate",
+    "ModifyDate",
+  ]);
+
+  const fileCreateMs = ctimeMs || mtimeMs;
+  const mediaCreateMs = exifCreate?.getTime() ?? fileCreateMs ?? mtimeMs;
+  const exifTimeMs = exifOriginal?.getTime() ?? null;
+  const takenTimeMs = exifOriginal?.getTime() ?? mediaCreateMs ?? mtimeMs;
+  const primaryTimeMs = config.media.preferExifTime
+    ? exifOriginal?.getTime() ?? mediaCreateMs ?? mtimeMs
+    : mediaCreateMs ?? exifOriginal?.getTime() ?? mtimeMs;
+
+  const dirPath = buildDirPath(relPath);
+  const fileName = path.basename(fullPath);
+  const thumbnailPath = buildThumbnailPath(config, relPath);
+
+  mediaStatements.upsert.run({
+    root,
+    rel_path: relPath,
+    dir_path: dirPath,
+    file_name: fileName,
+    extension,
+    media_type: mediaType,
+    size_bytes: sizeBytes,
+    mtime_ms: mtimeMs,
+    ctime_ms: ctimeMs,
+    exif_time_ms: exifTimeMs,
+    taken_time_ms: takenTimeMs ?? null,
+    media_create_time_ms: mediaCreateMs ?? null,
+    primary_time_ms: primaryTimeMs ?? null,
+    thumbnail_path: thumbnailPath,
+    scanned_at: Date.now(),
+  });
+
+  const idRow = mediaStatements.byRootRel.get(root, relPath) as
+    | { id?: number }
+    | undefined;
+
+  return {
+    id: typeof idRow?.id === "number" ? idRow.id : null,
+    item: {
+      root,
+      rel_path: relPath,
+      media_type: mediaType,
+      mtime_ms: mtimeMs,
+    },
+  };
+};
+
 const config = loadConfig();
 const { host, port, enableCors } = config.server;
 const logger = createLogger(config.logging);
+
+const libraryRoots = config.storage.libraryRoots.map((root) => path.resolve(root));
+const rootNames = libraryRoots.map((root) => {
+  const name = path.basename(root);
+  return name || root;
+});
+const imageExt = new Set(
+  config.media.supportedImageExt.map((ext) => ext.toLowerCase()),
+);
+const videoExt = new Set(
+  config.media.supportedVideoExt.map((ext) => ext.toLowerCase()),
+);
+const ignoreHidden = config.scan.ignoreHidden;
+const ignorePatterns = config.scan.ignorePatterns.map((item) => item.toLowerCase());
+
+const getMediaType = (extension: string): "image" | "video" | null => {
+  if (imageExt.has(extension)) {
+    return "image";
+  }
+  if (videoExt.has(extension)) {
+    return "video";
+  }
+  return null;
+};
+
+const shouldIgnoreEntry = (name: string): boolean => {
+  if (ignoreHidden && name.startsWith(".")) {
+    return true;
+  }
+  if (ignorePatterns.length === 0) {
+    return false;
+  }
+  const lowered = name.toLowerCase();
+  return ignorePatterns.some((pattern) => lowered.includes(pattern));
+};
 
 logger.info(`[config] loaded ${CONFIG_PATH}`);
 
@@ -262,6 +535,7 @@ const mediaStatements = {
   byId: db.prepare(
     "SELECT id, root, rel_path, media_type, thumbnail_path FROM media_items WHERE id = ?",
   ),
+  byRootRel: db.prepare("SELECT id FROM media_items WHERE root = ? AND rel_path = ?"),
   detail: db.prepare(`
     SELECT
       id,
@@ -280,6 +554,72 @@ const mediaStatements = {
       primary_time_ms
     FROM media_items
     WHERE id = ?
+  `),
+  listByDir: db.prepare(`
+    SELECT
+      id,
+      rel_path,
+      file_name,
+      media_type,
+      COALESCE(primary_time_ms, taken_time_ms, media_create_time_ms, mtime_ms, ctime_ms) AS sort_time_ms
+    FROM media_items
+    WHERE root = ? AND dir_path = ?
+    ORDER BY sort_time_ms ASC, id ASC
+  `),
+  listByDirRecursive: db.prepare(`
+    SELECT id, rel_path
+    FROM media_items
+    WHERE root = ? AND (dir_path = ? OR dir_path LIKE ?)
+  `),
+  upsert: db.prepare(`
+    INSERT INTO media_items (
+      root,
+      rel_path,
+      dir_path,
+      file_name,
+      extension,
+      media_type,
+      size_bytes,
+      mtime_ms,
+      ctime_ms,
+      exif_time_ms,
+      taken_time_ms,
+      media_create_time_ms,
+      primary_time_ms,
+      thumbnail_path,
+      scanned_at
+    )
+    VALUES (
+      @root,
+      @rel_path,
+      @dir_path,
+      @file_name,
+      @extension,
+      @media_type,
+      @size_bytes,
+      @mtime_ms,
+      @ctime_ms,
+      @exif_time_ms,
+      @taken_time_ms,
+      @media_create_time_ms,
+      @primary_time_ms,
+      @thumbnail_path,
+      @scanned_at
+    )
+    ON CONFLICT(root, rel_path) DO UPDATE SET
+      dir_path = excluded.dir_path,
+      file_name = excluded.file_name,
+      extension = excluded.extension,
+      media_type = excluded.media_type,
+      size_bytes = excluded.size_bytes,
+      mtime_ms = excluded.mtime_ms,
+      ctime_ms = excluded.ctime_ms,
+      exif_time_ms = excluded.exif_time_ms,
+      taken_time_ms = excluded.taken_time_ms,
+      media_create_time_ms = excluded.media_create_time_ms,
+      primary_time_ms = excluded.primary_time_ms,
+      thumbnail_path = excluded.thumbnail_path,
+      scanned_at = excluded.scanned_at
   `),
 };
 
@@ -337,6 +677,389 @@ server.get("/thumbnails", (_req, res) => {
 server.get("/api/pwa-config", (_req, res) => {
   const pwa = pickPwaConfig(config.pwa);
   res.header("Cache-Control", "no-store").json(pwa);
+});
+
+server.get("/api/media/formats", (_req, res) => {
+  res
+    .header("Cache-Control", "no-store")
+    .json({
+      supportedImageExt: config.media.supportedImageExt,
+      supportedVideoExt: config.media.supportedVideoExt,
+    });
+});
+
+server.get("/api/folders", async (req: Request, res: Response) => {
+  const query = req.query_parameters as Record<string, string | undefined>;
+  const rootCount = libraryRoots.length;
+  const rawRoot = query.root ?? query.rootId;
+  let rootId: number | null = null;
+  if (rawRoot !== undefined) {
+    const parsed = Number(rawRoot);
+    if (Number.isFinite(parsed)) {
+      rootId = Math.floor(parsed);
+    }
+  } else if (rootCount === 1) {
+    rootId = 0;
+  }
+
+  const root = rootId !== null ? getRootById(rootId) : null;
+  if (!root) {
+    const folders = libraryRoots.map((value, index) => ({
+      rootId: index,
+      name: rootNames[index] || value,
+    }));
+    res.header("Cache-Control", "no-store").json({
+      rootList: true,
+      rootId: null,
+      rootName: null,
+      path: "/",
+      parentPath: null,
+      rootCount,
+      folders,
+      items: [],
+    });
+    return;
+  }
+  const resolvedRootId = rootId ?? 0;
+
+  const folderPath = normalizeFolderPath(query.path);
+  if (!folderPath) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  const absFolder = resolveFolderFsPath(root, folderPath);
+  if (!absFolder) {
+    res.status(404).send();
+    return;
+  }
+
+  try {
+    const stat = await fsPromises.stat(absFolder);
+    if (!stat.isDirectory()) {
+      res.status(404).send();
+      return;
+    }
+  } catch {
+    res.status(404).send();
+    return;
+  }
+
+  let entries: Dirent[];
+  try {
+    entries = await fsPromises.readdir(absFolder, { withFileTypes: true });
+  } catch (error) {
+    logger.warn("[folders] read failed", { root: absFolder, error: String(error) });
+    res.status(500).json({ error: "list_failed" });
+    return;
+  }
+
+  const folders = entries
+    .filter((entry) => entry.isDirectory() && !shouldIgnoreEntry(entry.name))
+    .map((entry) => {
+      const joined = path.posix.join(folderPath, entry.name);
+      return {
+        name: entry.name,
+        path: joined.startsWith("/") ? joined : `/${joined}`,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "zh"));
+
+  type FolderMediaRow = {
+    id: number;
+    rel_path: string;
+    file_name: string;
+    media_type: "image" | "video";
+    sort_time_ms: number | null;
+  };
+
+  const rows = mediaStatements.listByDir.all(root, folderPath) as FolderMediaRow[];
+  const items = rows.map((row) => ({
+    id: row.id,
+    mediaType: row.media_type,
+    timeMs: row.sort_time_ms ?? 0,
+    relPath: row.rel_path,
+    fileName: row.file_name,
+    thumbUrl: `/media/thumb/${row.id}`,
+    originalUrl: `/media/original/${row.id}`,
+  }));
+
+  const parentPath = folderPath === "/" ? null : path.posix.dirname(folderPath);
+
+  res.header("Cache-Control", "no-store").json({
+    rootList: false,
+    rootId: resolvedRootId,
+    rootName: getRootName(resolvedRootId),
+    path: folderPath,
+    parentPath,
+    rootCount,
+    folders,
+    items,
+  });
+});
+
+server.post("/api/folders", async (req: Request, res: Response) => {
+  let body: { rootId?: number; path?: string; name?: string } | null = null;
+  try {
+    body = (await req.json()) as { rootId?: number; path?: string; name?: string };
+  } catch {
+    body = null;
+  }
+  if (!body) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+
+  const rootId = Number(body.rootId);
+  const root = getRootById(rootId);
+  if (!root) {
+    res.status(400).json({ error: "invalid_root" });
+    return;
+  }
+
+  const folderPath = normalizeFolderPath(body.path);
+  if (!folderPath) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name || name === "." || name === ".." || /[\\/]/.test(name)) {
+    res.status(400).json({ error: "invalid_name" });
+    return;
+  }
+
+  const targetPath = path.posix.join(folderPath, name);
+  const absTarget = resolveFolderFsPath(root, targetPath);
+  if (!absTarget) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  try {
+    await fsPromises.mkdir(absTarget, { recursive: false });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error) {
+      if ((error as { code?: string }).code === "EEXIST") {
+        res.status(409).json({ error: "exists" });
+        return;
+      }
+    }
+    res.status(500).json({ error: "create_failed" });
+    return;
+  }
+
+  res.status(201).json({
+    rootId,
+    path: targetPath.startsWith("/") ? targetPath : `/${targetPath}`,
+    name,
+  });
+});
+
+server.post("/api/upload", async (req: Request, res: Response) => {
+  const query = req.query_parameters as Record<string, string | undefined>;
+  const rawRoot = query.root ?? query.rootId;
+  const rootId = rawRoot !== undefined ? Number(rawRoot) : NaN;
+  const root = getRootById(rootId);
+  if (!root) {
+    res.status(400).json({ error: "invalid_root" });
+    return;
+  }
+
+  const folderPath = normalizeFolderPath(query.path);
+  if (!folderPath) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  const absFolder = resolveFolderFsPath(root, folderPath);
+  if (!absFolder) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  try {
+    await fsPromises.mkdir(absFolder, { recursive: true });
+  } catch (error) {
+    res.status(500).json({ error: "mkdir_failed" });
+    return;
+  }
+
+  const uploaded: { name: string; id: number | null }[] = [];
+  const failed: { name: string; error: string }[] = [];
+  const thumbTargets: ThumbnailItem[] = [];
+
+  try {
+    await req.multipart(async (field) => {
+      const file = field.file;
+      if (!file) {
+        return;
+      }
+      const safeName = path.basename(file.name || "upload");
+      const extension = path.extname(safeName).toLowerCase();
+      const mediaType = getMediaType(extension);
+      if (!mediaType) {
+        failed.push({ name: safeName, error: "unsupported" });
+        return;
+      }
+
+      let targetPath: string;
+      try {
+        targetPath = await buildUniquePath(absFolder, safeName);
+      } catch (error) {
+        failed.push({ name: safeName, error: "duplicate" });
+        return;
+      }
+
+      if (!isPathInside(root, targetPath)) {
+        failed.push({ name: safeName, error: "invalid_path" });
+        return;
+      }
+
+      try {
+        await field.write(targetPath);
+      } catch (error) {
+        failed.push({ name: safeName, error: "write_failed" });
+        return;
+      }
+
+      try {
+        const indexed = await indexMediaFile(root, targetPath);
+        if (indexed.item) {
+          thumbTargets.push(indexed.item);
+        }
+        uploaded.push({
+          name: path.basename(targetPath),
+          id: indexed.id,
+        });
+      } catch (error) {
+        failed.push({ name: safeName, error: "index_failed" });
+      }
+    });
+  } catch (error) {
+    logger.warn("[upload] multipart failed", { error: String(error) });
+    res.status(500).json({ error: "upload_failed" });
+    return;
+  }
+
+  if (thumbTargets.length > 0) {
+    try {
+      await thumbnails.generateForItems(thumbTargets, "manual");
+    } catch (error) {
+      logger.warn("[upload] thumbnails failed", { error: String(error) });
+    }
+  }
+
+  res.header("Cache-Control", "no-store").json({
+    uploaded,
+    failed,
+    total: uploaded.length,
+  });
+});
+
+server.delete("/api/folders/items", async (req: Request, res: Response) => {
+  let body:
+    | { rootId?: number; mediaIds?: number[]; folderPaths?: string[] }
+    | null = null;
+  try {
+    body = (await req.json()) as {
+      rootId?: number;
+      mediaIds?: number[];
+      folderPaths?: string[];
+    };
+  } catch {
+    body = null;
+  }
+  if (!body) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+
+  const rootId = Number(body.rootId);
+  const root = getRootById(rootId);
+  if (!root) {
+    res.status(400).json({ error: "invalid_root" });
+    return;
+  }
+
+  const mediaIds = Array.isArray(body.mediaIds)
+    ? body.mediaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+    : [];
+  const folderPaths = Array.isArray(body.folderPaths)
+    ? body.folderPaths.map((item) => String(item))
+    : [];
+
+  const idsToDelete = new Set<number>();
+  const relPathsToDelete = new Set<string>();
+
+  if (mediaIds.length > 0) {
+    const placeholders = mediaIds.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT id, rel_path FROM media_items WHERE root = ? AND id IN (${placeholders})`,
+      )
+      .all(root, ...mediaIds) as { id: number; rel_path: string }[];
+    rows.forEach((row) => {
+      idsToDelete.add(row.id);
+      relPathsToDelete.add(row.rel_path);
+    });
+  }
+
+  for (const rawPath of folderPaths) {
+    const folderPath = normalizeFolderPath(rawPath);
+    if (!folderPath) {
+      continue;
+    }
+    const absFolder = resolveFolderFsPath(root, folderPath);
+    if (!absFolder) {
+      continue;
+    }
+    const likePattern = folderPath === "/" ? "/%" : `${folderPath}/%`;
+    const rows = mediaStatements.listByDirRecursive.all(
+      root,
+      folderPath,
+      likePattern,
+    ) as { id: number; rel_path: string }[];
+    rows.forEach((row) => {
+      idsToDelete.add(row.id);
+      relPathsToDelete.add(row.rel_path);
+    });
+    try {
+      await fsPromises.rm(absFolder, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+
+  for (const relPath of relPathsToDelete) {
+    const filePath = path.resolve(root, toFsPathFromPosix(relPath));
+    if (!isPathInside(root, filePath)) {
+      continue;
+    }
+    try {
+      await fsPromises.rm(filePath, { force: true });
+    } catch {
+      // ignore
+    }
+    try {
+      await removeThumbnailsForRelPath(relPath);
+    } catch {
+      // ignore
+    }
+  }
+
+  if (idsToDelete.size > 0) {
+    const ids = Array.from(idsToDelete);
+    const placeholders = ids.map(() => "?").join(",");
+    db.prepare(`DELETE FROM media_items WHERE root = ? AND id IN (${placeholders})`).run(
+      root,
+      ...ids,
+    );
+  }
+
+  res.header("Cache-Control", "no-store").json({
+    deleted: idsToDelete.size,
+  });
 });
 
 server.get("/api/media", (req: Request, res: Response) => {

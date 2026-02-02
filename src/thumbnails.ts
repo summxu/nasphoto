@@ -7,16 +7,18 @@ import type { AppConfig } from "./config";
 import type { SqliteDatabase } from "./db";
 import type { Logger } from "./logger";
 
-type MediaType = "image" | "video";
+export type MediaType = "image" | "video";
 type ThumbnailReason = "manual" | "scan" | "startup";
 type SqliteStatement = import("better-sqlite3").Statement<unknown[]>;
 
-interface MediaItemRow {
+export interface ThumbnailItem {
   root: string;
   rel_path: string;
   media_type: MediaType;
   mtime_ms: number;
 }
+
+interface MediaItemRow extends ThumbnailItem {}
 
 interface ThumbnailCounts {
   targets: number;
@@ -218,6 +220,95 @@ export class ThumbnailService {
       queued: Boolean(this.queuedReason),
       current: this.current,
       last: this.last,
+    };
+  }
+
+  async generateForItems(
+    items: ThumbnailItem[],
+    reason: ThumbnailReason = "manual",
+  ): Promise<ThumbnailSummary> {
+    const startedAt = new Date();
+    const counts: ThumbnailCounts = {
+      targets: 0,
+      generated: 0,
+      skipped: 0,
+      failed: 0,
+      cleaned: 0,
+    };
+    const errorSamples: string[] = [];
+
+    const recordError = (message: string) => {
+      counts.failed += 1;
+      if (errorSamples.length < 10) {
+        errorSamples.push(message);
+      }
+    };
+
+    const sizes = Array.from(
+      new Set(
+        this.config.thumbnails.sizes
+          .map((size) => Math.floor(size))
+          .filter((size) => size > 0),
+      ),
+    );
+    if (sizes.length === 0) {
+      sizes.push(256);
+    }
+
+    const pool = new TaskPool(this.config.thumbnails.concurrency);
+
+    for (const item of items) {
+      const sourcePath = path.join(item.root, fromPosixPath(item.rel_path));
+      const targets = sizes.map((size) => ({
+        size,
+        path: buildThumbnailPath(this.config, item.rel_path, size),
+      }));
+
+      for (const target of targets) {
+        counts.targets += 1;
+      }
+
+      await pool.run(async () => {
+        for (const target of targets) {
+          try {
+            const generated = await this.generateIfNeeded(
+              item,
+              sourcePath,
+              target.path,
+              target.size,
+            );
+            if (generated) {
+              counts.generated += 1;
+            } else {
+              counts.skipped += 1;
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            recordError(
+              `[thumbnails] generate failed ${sourcePath} -> ${target.path}: ${message}`,
+            );
+          }
+        }
+      });
+    }
+
+    await pool.flush();
+
+    const finishedAt = new Date();
+    const durationMs = finishedAt.getTime() - startedAt.getTime();
+
+    this.logger.info(
+      `[thumbnails] targeted done in ${durationMs}ms, generated=${counts.generated}, skipped=${counts.skipped}, failed=${counts.failed}`,
+    );
+
+    return {
+      runId: randomUUID(),
+      reason,
+      startedAt: startedAt.toISOString(),
+      finishedAt: finishedAt.toISOString(),
+      durationMs,
+      counts,
+      errorSamples,
     };
   }
 
