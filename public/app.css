@@ -574,9 +574,11 @@ body::before {
 
 .exif-map {
     width: 100%;
-    border: none;
     border-radius: 12px;
     height: 180px;
+    object-fit: cover;
+    display: block;
+    background: #e5e5ea;
 }
 
 body.viewer-open {

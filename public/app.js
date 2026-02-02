@@ -141,14 +141,15 @@ const formatBytes = (size) => {
   return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
 };
 
-const buildBaiduMapUrl = (latitude, longitude) => {
+const BAIDU_MAP_AK = "2d93281b9c68987df16e8c11e259a735";
+
+const buildBaiduStaticMapUrl = (latitude, longitude) => {
   const lat = Number(latitude);
   const lng = Number(longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return "";
   }
-  return `https://www.bing.com/maps/embed?h=180&w=800&cp=${lat}~${lng}&lvl=20&typ=d&sty=r`
-  // return `https://map.baidu.com/?latlng=${lat},${lng}&title=${safeTitle}&content=${safeTitle}&output=embed`;
+  return `https://api.map.baidu.com/staticimage/v2?ak=${BAIDU_MAP_AK}&center=${lng},${lat}&zoom=16&width=640&height=360&markers=${lng},${lat}&markerStyles=l,,red`;
 };
 
 const createExifRow = (label, value) => {
@@ -230,16 +231,12 @@ const renderExifSheet = (data) => {
     if (Number.isFinite(data.gps.altitude)) {
       mapSection.appendChild(createExifRow("海拔", `${data.gps.altitude} m`));
     }
-    const iframe = document.createElement("iframe");
-    iframe.className = "exif-map";
-    iframe.loading = "lazy";
-    iframe.referrerPolicy = "no-referrer-when-downgrade";
-    iframe.src = buildBaiduMapUrl(
-      data.gps.latitude,
-      data.gps.longitude
-    );
-    iframe.width = "100%";
-    mapSection.appendChild(iframe);
+    const map = document.createElement("img");
+    map.className = "exif-map";
+    map.loading = "lazy";
+    map.alt = "地图";
+    map.src = buildBaiduStaticMapUrl(data.gps.latitude, data.gps.longitude);
+    mapSection.appendChild(map);
     elements.exifContent.appendChild(mapSection);
   }
 
