@@ -81,7 +81,8 @@
       ".mov",
       ".m4v",
       ".mkv",
-      ".avi"
+      ".avi",
+      ".3gp"
     ],
     "preferExifTime": true
   },

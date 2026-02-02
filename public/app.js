@@ -37,6 +37,7 @@ const elements = {
   viewer: document.getElementById("viewer"),
   viewerBackdrop: document.getElementById("viewer-backdrop"),
   viewerStage: document.getElementById("viewer-stage"),
+  viewerTrack: null,
   viewerClose: document.getElementById("viewer-close"),
   viewerPrev: document.getElementById("viewer-prev"),
   viewerNext: document.getElementById("viewer-next"),
@@ -46,6 +47,23 @@ const DEFAULT_PWA_CONFIG = {
   enabled: true,
   offlineCacheDays: 365,
   maxCacheEntries: 500,
+};
+
+const VIEWER_BACKDROP_OPACITY = 0.86;
+const VIEWER_SWIPE_RATIO = 0.18;
+const VIEWER_SWIPE_VELOCITY = 0.6;
+const VIEWER_DISMISS_RATIO = 0.18;
+
+const viewerGesture = {
+  pointerId: null,
+  startX: 0,
+  startY: 0,
+  lastX: 0,
+  lastY: 0,
+  startTime: 0,
+  mode: null,
+  stageWidth: 0,
+  stageHeight: 0,
 };
 
 const overlayMap = {
@@ -297,8 +315,57 @@ const closeViewer = () => {
   elements.viewer.classList.remove("is-visible");
   elements.viewer.setAttribute("aria-hidden", "true");
   elements.viewerStage.innerHTML = "";
+  elements.viewerTrack = null;
   document.body.classList.remove("viewer-open");
   state.viewerIndex = -1;
+  resetViewerTransforms({ keepBackdrop: true });
+};
+
+const setViewerBackdropOpacity = (value) => {
+  elements.viewerBackdrop.style.opacity = String(value);
+};
+
+const resetViewerTransforms = (options = {}) => {
+  elements.viewerStage.classList.remove("is-dragging");
+  elements.viewerStage.style.transform = "";
+  const track =
+    elements.viewerTrack || elements.viewerStage.querySelector(".viewer-track");
+  if (track) {
+    track.classList.remove("is-dragging");
+    track.style.transform = "";
+  }
+  if (!options.keepBackdrop) {
+    setViewerBackdropOpacity(VIEWER_BACKDROP_OPACITY);
+  }
+};
+
+const createViewerMedia = (item) => {
+  if (item.mediaType === "video") {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.src = item.originalUrl;
+    return video;
+  }
+
+  const img = document.createElement("img");
+  img.alt = "";
+  img.draggable = false;
+  img.src = item.originalUrl;
+  return img;
+};
+
+const createViewerSlide = (index) => {
+  const slide = document.createElement("div");
+  slide.className = "viewer-slide";
+  if (index < 0 || index >= state.items.length) {
+    slide.classList.add("is-empty");
+    return slide;
+  }
+  const item = state.items[index];
+  slide.appendChild(createViewerMedia(item));
+  return slide;
 };
 
 const renderViewer = () => {
@@ -309,24 +376,18 @@ const renderViewer = () => {
   }
 
   elements.viewerStage.innerHTML = "";
-
-  if (item.mediaType === "video") {
-    const video = document.createElement("video");
-    video.controls = true;
-    video.playsInline = true;
-    video.preload = "metadata";
-    video.src = item.originalUrl;
-    elements.viewerStage.appendChild(video);
-  } else {
-    const img = document.createElement("img");
-    img.alt = "";
-    img.src = item.originalUrl;
-    elements.viewerStage.appendChild(img);
-  }
+  const track = document.createElement("div");
+  track.className = "viewer-track";
+  track.appendChild(createViewerSlide(index - 1));
+  track.appendChild(createViewerSlide(index));
+  track.appendChild(createViewerSlide(index + 1));
+  elements.viewerStage.appendChild(track);
+  elements.viewerTrack = track;
 
   elements.viewerPrev.disabled = index <= 0;
   elements.viewerNext.disabled = index >= state.items.length - 1;
 
+  resetViewerTransforms();
   preloadNearby(index);
 };
 
@@ -367,44 +428,198 @@ const showNext = () => {
 };
 
 const setupViewerGestures = () => {
-  let startX = 0;
-  let startY = 0;
-  let pointerId = null;
+  const getStageSize = () => ({
+    width: elements.viewerStage.clientWidth || window.innerWidth,
+    height: elements.viewerStage.clientHeight || window.innerHeight,
+  });
+
+  const getTrack = () =>
+    elements.viewerTrack || elements.viewerStage.querySelector(".viewer-track");
+
+  const setTrackOffset = (offsetX, dragging = false) => {
+    const track = getTrack();
+    if (!track) {
+      return;
+    }
+    const width = viewerGesture.stageWidth || getStageSize().width;
+    const base = -width;
+    track.classList.toggle("is-dragging", dragging);
+    track.style.transform = `translate3d(${base + offsetX}px, 0, 0)`;
+  };
+
+  const animateTrackTo = (targetX, onDone) => {
+    const track = getTrack();
+    if (!track) {
+      onDone?.();
+      return;
+    }
+    track.classList.remove("is-dragging");
+    let done = false;
+    const finish = () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      track.removeEventListener("transitionend", finish);
+      onDone?.();
+    };
+    track.addEventListener("transitionend", finish, { once: true });
+    track.style.transform = `translate3d(${targetX}px, 0, 0)`;
+    setTimeout(finish, 260);
+  };
+
+  const resetDrag = () => {
+    viewerGesture.pointerId = null;
+    viewerGesture.mode = null;
+    elements.viewerStage.classList.remove("is-dragging");
+  };
 
   const onPointerDown = (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) {
       return;
     }
-    pointerId = event.pointerId;
-    startX = event.clientX;
-    startY = event.clientY;
-    elements.viewerStage.setPointerCapture(pointerId);
+    if (state.viewerIndex === -1) {
+      return;
+    }
+    const { width, height } = getStageSize();
+    viewerGesture.pointerId = event.pointerId;
+    viewerGesture.startX = event.clientX;
+    viewerGesture.startY = event.clientY;
+    viewerGesture.lastX = event.clientX;
+    viewerGesture.lastY = event.clientY;
+    viewerGesture.startTime = performance.now();
+    viewerGesture.mode = null;
+    viewerGesture.stageWidth = width;
+    viewerGesture.stageHeight = height;
+    elements.viewerStage.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event) => {
+    if (viewerGesture.pointerId !== event.pointerId) {
+      return;
+    }
+    const deltaX = event.clientX - viewerGesture.startX;
+    const deltaY = event.clientY - viewerGesture.startY;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    if (!viewerGesture.mode) {
+      if (absX < 6 && absY < 6) {
+        return;
+      }
+      if (absX > absY * 1.1) {
+        viewerGesture.mode = "horizontal";
+        elements.viewerStage.classList.add("is-dragging");
+      } else if (deltaY > 0 && absY > absX * 1.1) {
+        viewerGesture.mode = "vertical";
+        elements.viewerStage.classList.add("is-dragging");
+      } else {
+        return;
+      }
+    }
+
+    event.preventDefault();
+
+    if (viewerGesture.mode === "horizontal") {
+      const atStart = state.viewerIndex <= 0;
+      const atEnd = state.viewerIndex >= state.items.length - 1;
+      let offsetX = deltaX;
+      if ((atStart && deltaX > 0) || (atEnd && deltaX < 0)) {
+        offsetX = deltaX * 0.35;
+      }
+      setTrackOffset(offsetX, true);
+      elements.viewerStage.style.transform = "";
+      setViewerBackdropOpacity(VIEWER_BACKDROP_OPACITY);
+    } else {
+      const clamped = Math.max(0, deltaY);
+      const height = viewerGesture.stageHeight || getStageSize().height;
+      const progress = Math.min(1, clamped / (height * 0.9));
+      const scale = 1 - progress * 0.08;
+      elements.viewerStage.style.transform = `translate3d(0, ${clamped}px, 0) scale(${scale})`;
+      setViewerBackdropOpacity(VIEWER_BACKDROP_OPACITY * (1 - progress));
+      setTrackOffset(0, false);
+    }
+
+    viewerGesture.lastX = event.clientX;
+    viewerGesture.lastY = event.clientY;
   };
 
   const onPointerUp = (event) => {
-    if (pointerId !== event.pointerId) {
+    if (viewerGesture.pointerId !== event.pointerId) {
       return;
     }
-    const deltaX = event.clientX - startX;
-    const deltaY = event.clientY - startY;
-    pointerId = null;
+    const deltaX = event.clientX - viewerGesture.startX;
+    const deltaY = event.clientY - viewerGesture.startY;
+    const elapsed = performance.now() - viewerGesture.startTime;
+    const width = viewerGesture.stageWidth || getStageSize().width;
+    const height = viewerGesture.stageHeight || getStageSize().height;
+    const velocityX = deltaX / Math.max(elapsed, 1);
+    const velocityY = deltaY / Math.max(elapsed, 1);
 
-    if (Math.abs(deltaX) < 40 || Math.abs(deltaX) < Math.abs(deltaY) * 1.4) {
+    if (viewerGesture.mode === "horizontal") {
+      const threshold = width * VIEWER_SWIPE_RATIO;
+      const atStart = state.viewerIndex <= 0;
+      const atEnd = state.viewerIndex >= state.items.length - 1;
+
+      if ((deltaX > threshold || velocityX > VIEWER_SWIPE_VELOCITY) && !atStart) {
+        animateTrackTo(0, () => {
+          state.viewerIndex -= 1;
+          renderViewer();
+        });
+      } else if (
+        (deltaX < -threshold || velocityX < -VIEWER_SWIPE_VELOCITY) &&
+        !atEnd
+      ) {
+        animateTrackTo(-2 * width, () => {
+          state.viewerIndex += 1;
+          renderViewer();
+        });
+      } else {
+        animateTrackTo(-width);
+      }
+    } else if (viewerGesture.mode === "vertical") {
+      const dismissThreshold = height * VIEWER_DISMISS_RATIO;
+      if (deltaY > dismissThreshold || velocityY > VIEWER_SWIPE_VELOCITY) {
+        elements.viewerStage.classList.remove("is-dragging");
+        elements.viewerStage.style.transform = `translate3d(0, ${height}px, 0) scale(0.96)`;
+        setViewerBackdropOpacity(0);
+        setTimeout(() => {
+          closeViewer();
+        }, 200);
+      } else {
+        elements.viewerStage.classList.remove("is-dragging");
+        elements.viewerStage.style.transform = "";
+        setViewerBackdropOpacity(VIEWER_BACKDROP_OPACITY);
+      }
+    }
+
+    try {
+      elements.viewerStage.releasePointerCapture(event.pointerId);
+    } catch (error) {
+      console.warn("Pointer capture release failed", error);
+    }
+    resetDrag();
+  };
+
+  const onPointerCancel = (event) => {
+    if (viewerGesture.pointerId !== event.pointerId) {
       return;
     }
-
-    if (deltaX < 0) {
-      showNext();
-    } else {
-      showPrev();
+    try {
+      elements.viewerStage.releasePointerCapture(event.pointerId);
+    } catch (error) {
+      console.warn("Pointer capture release failed", error);
     }
+    resetViewerTransforms();
+    resetDrag();
   };
 
   elements.viewerStage.addEventListener("pointerdown", onPointerDown);
-  elements.viewerStage.addEventListener("pointerup", onPointerUp);
-  elements.viewerStage.addEventListener("pointercancel", () => {
-    pointerId = null;
+  elements.viewerStage.addEventListener("pointermove", onPointerMove, {
+    passive: false,
   });
+  elements.viewerStage.addEventListener("pointerup", onPointerUp);
+  elements.viewerStage.addEventListener("pointercancel", onPointerCancel);
 };
 
 const setupServiceWorker = async () => {
