@@ -4,6 +4,8 @@ const state = {
   columns: 3,
   gap: 2,
   edge: 6,
+  minCell: 110,
+  maxColumns: 7,
   cellSize: 0,
   rowHeight: 0,
   rowCount: 0,
@@ -86,8 +88,15 @@ const syncGridMetrics = () => {
   const styles = getComputedStyle(document.documentElement);
   const gap = parseFloat(styles.getPropertyValue("--grid-gap")) || 2;
   const edge = parseFloat(styles.getPropertyValue("--grid-edge")) || 6;
+  const minCell = parseFloat(styles.getPropertyValue("--grid-min")) || 110;
+  const maxColumns = Math.max(
+    2,
+    parseInt(styles.getPropertyValue("--grid-max"), 10) || 7,
+  );
   state.gap = gap;
   state.edge = edge;
+  state.minCell = minCell;
+  state.maxColumns = maxColumns;
 };
 
 const updateLayout = () => {
@@ -98,7 +107,14 @@ const updateLayout = () => {
   syncGridMetrics();
   const width = scroller.clientWidth;
   const usable = Math.max(0, width - state.edge * 2);
-  const cell = Math.floor((usable - state.gap * (state.columns - 1)) / state.columns);
+  const columns = Math.max(
+    2,
+    Math.floor((usable + state.gap) / (state.minCell + state.gap)),
+  );
+  state.columns = Math.min(state.maxColumns, columns);
+  const cell = Math.floor(
+    (usable - state.gap * (state.columns - 1)) / state.columns,
+  );
   state.cellSize = Math.max(64, cell);
   state.rowHeight = state.cellSize + state.gap;
   state.rowCount = Math.ceil(state.items.length / state.columns);

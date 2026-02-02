@@ -10,6 +10,8 @@
     --topbar-height: 72px;
     --grid-gap: 2px;
     --grid-edge: 6px;
+    --grid-min: 110px;
+    --grid-max: 7;
 }
 
 * {
@@ -326,6 +328,7 @@ body::before {
     display: flex;
     align-items: center;
     justify-content: center;
+    z-index: 2;
 }
 
 .viewer-stage {
@@ -335,6 +338,8 @@ body::before {
     align-items: center;
     justify-content: center;
     overflow: hidden;
+    position: relative;
+    z-index: 1;
     touch-action: none;
     transition: transform 0.25s ease;
     will-change: transform;
@@ -386,6 +391,7 @@ body::before {
     font-size: 24px;
     display: grid;
     place-items: center;
+    z-index: 3;
 }
 
 .viewer-nav {
@@ -401,6 +407,7 @@ body::before {
     font-size: 26px;
     display: grid;
     place-items: center;
+    z-index: 3;
 }
 
 .viewer-prev {
@@ -435,5 +442,11 @@ body.viewer-open {
         max-width: 480px;
         margin: 0 auto;
         border-radius: 20px 20px 0 0;
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .viewer-nav {
+        display: none;
     }
 }
