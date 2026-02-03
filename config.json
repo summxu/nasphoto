@@ -1,18 +1,18 @@
 {
   "server": {
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     "port": 3000,
     "enableCors": false
   },
   "storage": {
     "libraryRoots": [
-      "D:\\NodeJS\\nasphoto\\data\\photos"
+      "./data/photos"
     ],
-    "cacheDir": "D:\\NodeJS\\nasphoto\\data\\cache",
-    "thumbnailDir": "D:\\NodeJS\\nasphoto\\data\\thumbs",
-    "faceDir": "D:\\NodeJS\\nasphoto\\data\\faces",
-    "memoryDir": "D:\\NodeJS\\nasphoto\\data\\memories",
-    "tempDir": "D:\\NodeJS\\nasphoto\\data\\tmp"
+    "cacheDir": "./data/cache",
+    "thumbnailDir": "./data/thumbs",
+    "faceDir": "./data/faces",
+    "memoryDir": "./data/memories",
+    "tempDir": "./data/tmp"
   },
   "scan": {
     "cron": "0 0 * * *",
@@ -39,7 +39,7 @@
     "regenerate": false,
     "videoSeekSeconds": 1,
     "videoKeyframesOnly": true,
-    "ffmpegPath": "D:\\\\ffmpeg-8.0.1-essentials_build\\\\bin\\\\ffmpeg.exe"
+    "ffmpegPath": "ffmpeg"
   },
   "media": {
     "supportedImageExt": [
@@ -74,7 +74,7 @@
     "enabled": true,
     "generateCron": "0 4 * * 6",
     "maxItemCount": 30,
-    "musicDir": "D:\\NodeJS\\nasphoto\\data\\tmp"
+    "musicDir": "./data/tmp"
   },
   "pwa": {
     "enabled": true,
@@ -90,7 +90,7 @@
   },
   "logging": {
     "level": "info",
-    "file": "D:\\NodeJS\\nasphoto\\data\\tmp\\app.log",
+    "file": "./data/tmp/app.log",
     "maxSizeMB": 10,
     "maxFiles": 5
   }
