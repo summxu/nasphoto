@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import type { Dirent } from "node:fs";
 import fsPromises from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import HyperExpress, { type Request, type Response } from "hyper-express";
 import { CONFIG_PATH, loadConfig, type PwaConfig } from "./config";
 import { openDatabase } from "./db";
@@ -508,6 +509,54 @@ const shouldIgnoreEntry = (name: string): boolean => {
   return ignorePatterns.some((pattern) => lowered.includes(pattern));
 };
 
+const UPLOAD_CHUNK_SIZE = 64 * 1024 * 1024;
+const UPLOAD_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
+type UploadSession = {
+  id: string;
+  root: string;
+  tempPath: string;
+  targetPath: string;
+  size: number;
+  receivedBytes: number;
+  createdAt: number;
+};
+
+const uploadSessions = new Map<string, UploadSession>();
+
+const cleanupUploadSessions = async () => {
+  const now = Date.now();
+  const stale: UploadSession[] = [];
+  for (const session of uploadSessions.values()) {
+    if (now - session.createdAt > UPLOAD_SESSION_TTL_MS) {
+      stale.push(session);
+    }
+  }
+  for (const session of stale) {
+    uploadSessions.delete(session.id);
+    try {
+      await fsPromises.rm(session.tempPath, { force: true });
+    } catch {
+      // ignore
+    }
+  }
+};
+
+const safeRename = async (fromPath: string, toPath: string) => {
+  try {
+    await fsPromises.rename(fromPath, toPath);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error) {
+      if ((error as { code?: string }).code === "EXDEV") {
+        await fsPromises.copyFile(fromPath, toPath);
+        await fsPromises.rm(fromPath, { force: true });
+        return;
+      }
+    }
+    throw error;
+  }
+};
+
 logger.info(`[config] loaded ${CONFIG_PATH}`);
 
 const db = openDatabase(config);
@@ -958,6 +1007,223 @@ server.post("/api/upload", async (req: Request, res: Response) => {
     failed,
     total: uploaded.length,
   });
+});
+
+server.post("/api/upload/init", async (req: Request, res: Response) => {
+  await cleanupUploadSessions();
+  let body:
+    | { rootId?: number; path?: string; name?: string; size?: number }
+    | null = null;
+  try {
+    body = (await req.json()) as {
+      rootId?: number;
+      path?: string;
+      name?: string;
+      size?: number;
+    };
+  } catch {
+    body = null;
+  }
+  if (!body) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+
+  const rootId = Number(body.rootId);
+  const root = getRootById(rootId);
+  if (!root) {
+    res.status(400).json({ error: "invalid_root" });
+    return;
+  }
+
+  const folderPath = normalizeFolderPath(body.path);
+  if (!folderPath) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name || name === "." || name === ".." || /[\\/]/.test(name)) {
+    res.status(400).json({ error: "invalid_name" });
+    return;
+  }
+
+  const size = Number(body.size);
+  if (!Number.isFinite(size) || size <= 0) {
+    res.status(400).json({ error: "invalid_size" });
+    return;
+  }
+
+  const extension = path.extname(name).toLowerCase();
+  if (!getMediaType(extension)) {
+    res.status(400).json({ error: "unsupported_media_type" });
+    return;
+  }
+
+  const absFolder = resolveFolderFsPath(root, folderPath);
+  if (!absFolder) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  try {
+    await fsPromises.mkdir(absFolder, { recursive: true });
+  } catch {
+    res.status(500).json({ error: "mkdir_failed" });
+    return;
+  }
+
+  let targetPath: string;
+  try {
+    targetPath = await buildUniquePath(absFolder, name);
+  } catch {
+    res.status(500).json({ error: "target_failed" });
+    return;
+  }
+  if (!isPathInside(root, targetPath)) {
+    res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+
+  const uploadId = randomUUID();
+  const tempDir = path.resolve(config.storage.tempDir, "uploads");
+  const tempPath = path.join(tempDir, `${uploadId}.part`);
+
+  try {
+    await fsPromises.mkdir(tempDir, { recursive: true });
+    await fsPromises.writeFile(tempPath, "");
+  } catch {
+    res.status(500).json({ error: "temp_failed" });
+    return;
+  }
+
+  uploadSessions.set(uploadId, {
+    id: uploadId,
+    root,
+    tempPath,
+    targetPath,
+    size,
+    receivedBytes: 0,
+    createdAt: Date.now(),
+  });
+
+  res.header("Cache-Control", "no-store").json({
+    uploadId,
+    chunkSize: UPLOAD_CHUNK_SIZE,
+    targetName: path.basename(targetPath),
+  });
+});
+
+server.post("/api/upload/chunk/:id", async (req: Request, res: Response) => {
+  const uploadId = req.path_parameters.id;
+  const session = uploadSessions.get(uploadId);
+  if (!session) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const query = req.query_parameters as Record<string, string | undefined>;
+  const offsetRaw = query.offset ?? req.header("x-upload-offset");
+  const offset = offsetRaw ? Number(offsetRaw) : NaN;
+  if (!Number.isFinite(offset) || offset < 0) {
+    res.status(400).json({ error: "invalid_offset" });
+    return;
+  }
+  if (offset !== session.receivedBytes) {
+    res.status(409).json({ error: "offset_mismatch" });
+    return;
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = await req.buffer();
+  } catch (error) {
+    res.status(400).json({ error: "invalid_chunk" });
+    return;
+  }
+
+  const nextSize = session.receivedBytes + buffer.length;
+  if (nextSize > session.size) {
+    res.status(400).json({ error: "chunk_too_large" });
+    return;
+  }
+
+  try {
+    await fsPromises.appendFile(session.tempPath, buffer);
+  } catch (error) {
+    res.status(500).json({ error: "write_failed" });
+    return;
+  }
+
+  session.receivedBytes = nextSize;
+  res.header("Cache-Control", "no-store").json({
+    receivedBytes: session.receivedBytes,
+    size: session.size,
+  });
+});
+
+server.post("/api/upload/complete/:id", async (req: Request, res: Response) => {
+  const uploadId = req.path_parameters.id;
+  const session = uploadSessions.get(uploadId);
+  if (!session) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  if (session.receivedBytes !== session.size) {
+    res.status(409).json({ error: "incomplete" });
+    return;
+  }
+
+  try {
+    await safeRename(session.tempPath, session.targetPath);
+  } catch (error) {
+    res.status(500).json({ error: "finalize_failed" });
+    return;
+  }
+
+  let indexedId: number | null = null;
+  let thumbItem: ThumbnailItem | null = null;
+  try {
+    const indexed = await indexMediaFile(session.root, session.targetPath);
+    indexedId = indexed.id;
+    thumbItem = indexed.item;
+  } catch (error) {
+    logger.warn("[upload] chunk finalize index failed", {
+      path: session.targetPath,
+      error: String(error),
+    });
+  }
+
+  if (thumbItem) {
+    try {
+      await thumbnails.generateForItems([thumbItem], "manual");
+    } catch (error) {
+      logger.warn("[upload] chunk thumbnails failed", { error: String(error) });
+    }
+  }
+
+  uploadSessions.delete(uploadId);
+
+  res.header("Cache-Control", "no-store").json({
+    id: indexedId,
+    name: path.basename(session.targetPath),
+  });
+});
+
+server.delete("/api/upload/:id", async (req: Request, res: Response) => {
+  const uploadId = req.path_parameters.id;
+  const session = uploadSessions.get(uploadId);
+  if (!session) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  uploadSessions.delete(uploadId);
+  try {
+    await fsPromises.rm(session.tempPath, { force: true });
+  } catch {
+    // ignore
+  }
+  res.header("Cache-Control", "no-store").json({ ok: true });
 });
 
 server.delete("/api/folders/items", async (req: Request, res: Response) => {

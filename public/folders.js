@@ -35,6 +35,21 @@
   const overlayMap = {};
   let scrollIndicatorTimer = null;
 
+  const UPLOAD_BATCH_LIMIT = 200 * 1024 * 1024;
+  const formatBytes = (size) => {
+    if (!Number.isFinite(size) || size <= 0) {
+      return "0 B";
+    }
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = size;
+    let idx = 0;
+    while (value >= 1024 && idx < units.length - 1) {
+      value /= 1024;
+      idx += 1;
+    }
+    return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+  };
+
   const folderIconSvg =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 
@@ -757,11 +772,19 @@
     setLoadingText("正在上传文件");
     state.uploading = true;
     await requestWakeLock();
-    const formData = new FormData();
-    Array.from(files).forEach((file) => {
-      formData.append("files", file);
-    });
-    try {
+    const queue = Array.from(files);
+    const totalCount = queue.length;
+    let completed = 0;
+
+    const updateStatus = (text) => {
+      setLoadingText(text);
+    };
+
+    const uploadBatch = async (batch) => {
+      const formData = new FormData();
+      batch.forEach((file) => {
+        formData.append("files", file);
+      });
       const response = await fetch(
         `/api/upload?root=${state.rootId}&path=${encodeURIComponent(state.path)}`,
         {
@@ -769,10 +792,121 @@
           body: formData,
         },
       );
+      if (response.status === 413) {
+        const error = new Error("payload_too_large");
+        error.code = "payload_too_large";
+        throw error;
+      }
       if (!response.ok) {
         throw new Error(`Upload failed: ${response.status}`);
       }
       await response.json();
+    };
+
+    const uploadChunked = async (file, index) => {
+      updateStatus(
+        `正在上传 ${index}/${totalCount} · ${file.name} (${formatBytes(file.size)})`,
+      );
+      const initResponse = await fetchJson("/api/upload/init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rootId: state.rootId,
+          path: state.path,
+          name: file.name,
+          size: file.size,
+        }),
+      });
+      const uploadId = initResponse.uploadId;
+      const chunkSize = initResponse.chunkSize || UPLOAD_BATCH_LIMIT;
+      let offset = 0;
+      while (offset < file.size) {
+        const nextOffset = Math.min(file.size, offset + chunkSize);
+        const chunk = file.slice(offset, nextOffset);
+        const response = await fetch(
+          `/api/upload/chunk/${uploadId}?offset=${offset}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: chunk,
+          },
+        );
+        if (!response.ok) {
+          throw new Error(`Chunk failed: ${response.status}`);
+        }
+        offset = nextOffset;
+        const percent = Math.min(100, Math.round((offset / file.size) * 100));
+        updateStatus(
+          `正在上传 ${index}/${totalCount} · ${file.name} ${percent}%`,
+        );
+      }
+      await fetchJson(`/api/upload/complete/${uploadId}`, { method: "POST" });
+    };
+
+    const buildBatches = (list) => {
+      const batches = [];
+      let current = [];
+      let currentSize = 0;
+      list.forEach((file) => {
+        if (file.size > UPLOAD_BATCH_LIMIT) {
+          batches.push([file]);
+          return;
+        }
+        if (currentSize + file.size > UPLOAD_BATCH_LIMIT && current.length > 0) {
+          batches.push(current);
+          current = [];
+          currentSize = 0;
+        }
+        current.push(file);
+        currentSize += file.size;
+      });
+      if (current.length > 0) {
+        batches.push(current);
+      }
+      return batches;
+    };
+
+    try {
+      const batches = buildBatches(queue);
+      for (const batch of batches) {
+        if (batch.length === 1 && batch[0].size > UPLOAD_BATCH_LIMIT) {
+          completed += 1;
+          await uploadChunked(batch[0], completed);
+          continue;
+        }
+        try {
+          updateStatus(
+            `正在上传 ${completed + 1}-${completed + batch.length}/${totalCount}`,
+          );
+          await uploadBatch(batch);
+          completed += batch.length;
+        } catch (error) {
+          if (error?.code === "payload_too_large") {
+            for (const file of batch) {
+              completed += 1;
+              if (file.size > UPLOAD_BATCH_LIMIT) {
+                await uploadChunked(file, completed);
+              } else {
+                updateStatus(
+                  `正在上传 ${completed}/${totalCount} · ${file.name}`,
+                );
+                try {
+                  await uploadBatch([file]);
+                } catch (singleError) {
+                  if (singleError?.code === "payload_too_large") {
+                    await uploadChunked(file, completed);
+                  } else {
+                    throw singleError;
+                  }
+                }
+              }
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+
       await loadFolder();
     } catch (error) {
       console.error(error);

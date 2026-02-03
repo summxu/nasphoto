@@ -99,7 +99,7 @@ const toggleElement = (el, show) => {
 
 const setTopbarActions = (mode, hasSelection = false) => {
   if (mode === "gallery") {
-    toggleElement(elements.refreshButton, true);
+    toggleElement(elements.refreshButton, false);
     toggleElement(elements.folderCount, false);
     toggleElement(elements.folderCancelButton, false);
     toggleElement(elements.folderDeleteButton, false);
