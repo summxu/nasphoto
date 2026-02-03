@@ -364,6 +364,10 @@
       );
     }
 
+    if (elements.deleteButton) {
+      elements.deleteButton.disabled = state.selected.size === 0;
+    }
+
     updateTopbarMeta();
     updateFolderCount();
     updateFabState();
@@ -449,11 +453,18 @@
   };
 
   const updateFabState = () => {
-    if (!elements.actionButton) {
-      return;
+    const showAction = !state.selectionMode && !state.rootList;
+    if (elements.actionButton) {
+      elements.actionButton.style.display = showAction ? "" : "none";
     }
-    const shouldShow = !state.selectionMode && !state.rootList;
-    elements.actionButton.style.display = shouldShow ? "" : "none";
+    if (elements.fabSelection) {
+      const showSelection = state.selectionMode && !state.rootList;
+      elements.fabSelection.style.display = showSelection ? "flex" : "none";
+      elements.fabSelection.setAttribute(
+        "aria-hidden",
+        showSelection ? "false" : "true",
+      );
+    }
   };
 
   const openViewerForItem = (item) => {
@@ -1067,6 +1078,7 @@
     elements.uploadInput = document.getElementById("folder-upload-input");
 
     elements.actionButton = document.getElementById("folder-fab");
+    elements.fabSelection = document.getElementById("folder-fab-selection");
     elements.cancelButton = document.getElementById("folder-cancel-button");
     elements.deleteButton = document.getElementById("folder-delete-button");
 

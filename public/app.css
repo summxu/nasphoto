@@ -268,11 +268,50 @@ body::before {
 .fab-action svg {
     width: 24px;
     height: 24px;
-    fill: #fff;
+    fill: currentColor;
 }
 
 .fab-action:active {
     transform: scale(0.97);
+}
+
+.fab-action:disabled {
+    opacity: 0.45;
+    box-shadow: none;
+}
+
+.fab-action svg.fab-icon {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.fab-selection {
+    position: fixed;
+    right: 16px;
+    bottom: calc(var(--tabbar-height) + 28px + env(safe-area-inset-bottom));
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 8;
+}
+
+.fab-selection .fab-action {
+    position: static;
+}
+
+.fab-action-secondary {
+    background: linear-gradient(135deg, #f2f2f7, #d8dbe6);
+    color: #1c1c1e;
+    box-shadow: 0 14px 26px rgba(28, 28, 30, 0.18);
+}
+
+.fab-action-danger {
+    background: linear-gradient(135deg, #ff6b6b, #f03e3e);
+    color: #fff;
+    box-shadow: 0 14px 26px rgba(240, 62, 62, 0.28);
 }
 
 .folder-tile {
