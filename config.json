@@ -71,7 +71,7 @@
   },
   "memories": {
     "enabled": true,
-    "generateCron": "0 4 * * 1",
+    "generateCron": "0 4 * * 6",
     "maxDurationSeconds": 90,
     "introSeconds": 3,
     "outroSeconds": 3,

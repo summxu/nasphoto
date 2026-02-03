@@ -390,6 +390,12 @@
       window.NasPhotoTopbar?.setMeta?.(`已选择 ${state.selected.size} 项`);
       return;
     }
+    if (!state.rootList) {
+      const count = state.mediaItems.length;
+      if (!count) return
+      window.NasPhotoTopbar?.setMeta?.(`共 ${count} 张`);
+      return;
+    }
     window.NasPhotoTopbar?.setMeta?.("");
   };
 
@@ -439,12 +445,7 @@
     if (!window.NasPhotoTopbar?.setFolderCount) {
       return;
     }
-    if (state.rootList || state.selectionMode) {
-      window.NasPhotoTopbar.setFolderCount("");
-      return;
-    }
-    const count = state.mediaItems.length;
-    window.NasPhotoTopbar.setFolderCount(`共 ${count} 个文件`);
+    window.NasPhotoTopbar.setFolderCount("");
   };
 
   const updateFabState = () => {
