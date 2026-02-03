@@ -144,8 +144,28 @@
 <div class="action-sheet" id="exif-sheet" aria-hidden="true">
     <div class="action-sheet-backdrop" id="exif-sheet-backdrop"></div>
     <div class="action-sheet-panel">
+        <div style="height: 13px" class="action-sheet-handle"></div>
         <div class="action-sheet-title">EXIF 详情</div>
         <div class="action-sheet-body" id="exif-content"></div>
+    </div>
+</div>
+
+<div class="action-sheet" id="viewer-delete-sheet" aria-hidden="true">
+    <div class="action-sheet-backdrop" id="viewer-delete-backdrop"></div>
+    <div class="action-sheet-panel">
+        <div class="action-sheet-handle"></div>
+        <div class="action-sheet-title">确认删除</div>
+        <div class="action-sheet-body">
+            <div class="confirm-text" id="viewer-delete-text">确认删除当前文件？</div>
+            <div class="sheet-actions">
+                <button class="sheet-button" id="viewer-delete-cancel" type="button">
+                    取消
+                </button>
+                <button class="sheet-button is-danger" id="viewer-delete-confirm" type="button">
+                    删除
+                </button>
+            </div>
+        </div>
     </div>
 </div>
 

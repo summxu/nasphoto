@@ -54,6 +54,11 @@ const elements = {
   viewerClose: document.getElementById("viewer-close"),
   viewerPrev: document.getElementById("viewer-prev"),
   viewerNext: document.getElementById("viewer-next"),
+  viewerDeleteSheet: document.getElementById("viewer-delete-sheet"),
+  viewerDeleteBackdrop: document.getElementById("viewer-delete-backdrop"),
+  viewerDeleteText: document.getElementById("viewer-delete-text"),
+  viewerDeleteCancel: document.getElementById("viewer-delete-cancel"),
+  viewerDeleteConfirm: document.getElementById("viewer-delete-confirm"),
   exifSheet: document.getElementById("exif-sheet"),
   exifSheetBackdrop: document.getElementById("exif-sheet-backdrop"),
   exifContent: document.getElementById("exif-content"),
@@ -286,6 +291,37 @@ const openExifSheet = () => {
   }
   elements.exifSheet.classList.add("is-visible");
   elements.exifSheet.setAttribute("aria-hidden", "false");
+};
+
+const openViewerDeleteSheet = () => {
+  if (!elements.viewerDeleteSheet) {
+    return;
+  }
+  elements.viewerDeleteSheet.classList.add("is-visible");
+  elements.viewerDeleteSheet.setAttribute("aria-hidden", "false");
+};
+
+const closeViewerDeleteSheet = () => {
+  if (!elements.viewerDeleteSheet) {
+    return;
+  }
+  elements.viewerDeleteSheet.classList.remove("is-visible");
+  elements.viewerDeleteSheet.setAttribute("aria-hidden", "true");
+};
+
+const setViewerDeleteText = (text) => {
+  if (elements.viewerDeleteText) {
+    elements.viewerDeleteText.textContent = text;
+  }
+};
+
+const setViewerDeleteBusy = (busy) => {
+  if (elements.viewerDeleteConfirm) {
+    elements.viewerDeleteConfirm.disabled = busy;
+  }
+  if (elements.viewerDeleteCancel) {
+    elements.viewerDeleteCancel.disabled = busy;
+  }
 };
 
 const renderExifSheet = (data) => {
@@ -606,6 +642,8 @@ const updateGalleryAfterDelete = () => {
   if (activeTab !== "gallery") {
     return;
   }
+  state.visible.forEach((node) => node.remove());
+  state.visible.clear();
   state.total = state.items.length;
   if (state.items.length === 0) {
     updateOverlay("empty");
@@ -631,17 +669,12 @@ const deleteCurrentViewerItem = async () => {
   }
   const rootId = Number.isFinite(item.rootId) ? item.rootId : null;
   if (rootId === null) {
-    alert("无法删除该文件");
-    return;
-  }
-  const confirmed = window.confirm("确认删除当前文件？");
-  if (!confirmed) {
+    setViewerDeleteText("无法删除该文件");
     return;
   }
   viewerDeletePending = true;
-  if (elements.viewerDelete) {
-    elements.viewerDelete.disabled = true;
-  }
+  setViewerDeleteBusy(true);
+  setViewerDeleteText("正在删除...");
   try {
     await fetchJson("/api/folders/items", {
       method: "DELETE",
@@ -650,21 +683,20 @@ const deleteCurrentViewerItem = async () => {
     });
   } catch (error) {
     console.error(error);
-    alert("删除失败");
+    setViewerDeleteText("删除失败，请重试");
     viewerDeletePending = false;
-    if (elements.viewerDelete) {
-      elements.viewerDelete.disabled = false;
-    }
+    setViewerDeleteBusy(false);
+    openViewerDeleteSheet();
     return;
   }
+
+  closeViewerDeleteSheet();
 
   const hasNext = index < viewerState.items.length - 1;
   const hasPrev = index > 0;
   const finalize = () => {
     viewerDeletePending = false;
-    if (elements.viewerDelete) {
-      elements.viewerDelete.disabled = false;
-    }
+    setViewerDeleteBusy(false);
   };
 
   if (!hasNext && !hasPrev) {
@@ -706,6 +738,23 @@ const deleteCurrentViewerItem = async () => {
     renderViewer();
     finalize();
   });
+};
+
+const openViewerDeletePrompt = () => {
+  if (viewerDeletePending) {
+    return;
+  }
+  if (viewerState.index < 0 || viewerState.index >= viewerState.items.length) {
+    return;
+  }
+  const item = viewerState.items[viewerState.index];
+  if (item?.fileName) {
+    setViewerDeleteText(`确认删除 ${item.fileName}？`);
+  } else {
+    setViewerDeleteText("确认删除当前文件？");
+  }
+  setViewerDeleteBusy(false);
+  openViewerDeleteSheet();
 };
 
 const loadMedia = async () => {
@@ -820,6 +869,7 @@ const closeViewer = () => {
   viewerState.index = -1;
   viewerState.items = [];
   closeExifSheet();
+  closeViewerDeleteSheet();
   resetViewerTransforms({ keepBackdrop: true });
 };
 
@@ -1196,8 +1246,11 @@ const setupEvents = () => {
     openExifSheet();
     loadExifForCurrent();
   });
-  elements.viewerDelete?.addEventListener("click", deleteCurrentViewerItem);
+  elements.viewerDelete?.addEventListener("click", openViewerDeletePrompt);
   elements.exifSheetBackdrop.addEventListener("click", closeExifSheet);
+  elements.viewerDeleteBackdrop?.addEventListener("click", closeViewerDeleteSheet);
+  elements.viewerDeleteCancel?.addEventListener("click", closeViewerDeleteSheet);
+  elements.viewerDeleteConfirm?.addEventListener("click", deleteCurrentViewerItem);
 
   document.addEventListener("keydown", (event) => {
     if (viewerState.index === -1) {
