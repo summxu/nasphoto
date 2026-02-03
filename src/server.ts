@@ -623,7 +623,10 @@ const mediaStatements = {
   `),
 };
 
-const server = new HyperExpress.Server();
+const server = new HyperExpress.Server({
+  max_body_length: 1024 * 1024 * 1024,
+  max_body_buffer: 1024 * 1024 * 1024,
+});
 
 if (enableCors) {
   server.use((req, res, next) => {

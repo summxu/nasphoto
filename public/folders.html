@@ -1,9 +1,9 @@
 <div class="folder-view" id="folder-view">
-  <button class="folder-back" id="folder-back" type="button">上级</button>
   <div class="gallery-scroller" id="folder-scroller">
     <div class="gallery-spacer" id="folder-spacer" aria-hidden="true"></div>
     <div class="gallery-items" id="folder-items" role="list"></div>
   </div>
+  <div class="scroll-indicator" id="folder-scroll-indicator" aria-hidden="true"></div>
   <div class="gallery-overlay" id="folder-overlay">
     <div class="gallery-loading" id="folder-loading">
       <div class="spinner"></div>
@@ -22,6 +22,13 @@
     </div>
   </div>
 </div>
+
+<button class="fab-action" id="folder-fab" type="button" aria-label="文件夹操作">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M11 5h2v14h-2z"></path>
+    <path d="M5 11h14v2H5z"></path>
+  </svg>
+</button>
 
 <input type="file" id="folder-upload-input" multiple hidden />
 

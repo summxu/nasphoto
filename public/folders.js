@@ -33,6 +33,7 @@
   const elements = {};
 
   const overlayMap = {};
+  let scrollIndicatorTimer = null;
 
   const folderIconSvg =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
@@ -59,6 +60,73 @@
     if (stateName && overlayMap[stateName]) {
       overlayMap[stateName].classList.add("is-visible");
     }
+    if (stateName) {
+      hideScrollIndicator();
+    }
+  };
+
+  const formatScrollDate = (timeMs) => {
+    if (!Number.isFinite(timeMs) || timeMs <= 0) {
+      return "未知日期";
+    }
+    const date = new Date(timeMs);
+    if (Number.isNaN(date.getTime())) {
+      return "未知日期";
+    }
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1);
+    const day = String(date.getDate());
+    return `${year}年${month}月${day}日`;
+  };
+
+  const hideScrollIndicator = () => {
+    if (!elements.scrollIndicator) {
+      return;
+    }
+    elements.scrollIndicator.classList.remove("is-visible");
+  };
+
+  const showScrollIndicator = () => {
+    if (!elements.scrollIndicator) {
+      return;
+    }
+    elements.scrollIndicator.classList.add("is-visible");
+    if (scrollIndicatorTimer) {
+      clearTimeout(scrollIndicatorTimer);
+    }
+    scrollIndicatorTimer = setTimeout(() => {
+      hideScrollIndicator();
+    }, 700);
+  };
+
+  const updateScrollIndicator = () => {
+    if (
+      !elements.scrollIndicator ||
+      state.items.length === 0 ||
+      state.rowHeight <= 0 ||
+      state.columns <= 0
+    ) {
+      return;
+    }
+    const scroller = elements.scroller;
+    const scrollTop = scroller.scrollTop;
+    const viewportHeight = scroller.clientHeight;
+    const anchor = scrollTop + Math.min(120, viewportHeight * 0.2);
+    const row = Math.max(0, Math.floor(anchor / state.rowHeight));
+    let index = Math.min(state.items.length - 1, row * state.columns);
+    let item = state.items[index];
+    while (item && item.kind !== "media" && index > 0) {
+      index -= 1;
+      item = state.items[index];
+    }
+    if (!item || item.kind !== "media") {
+      return;
+    }
+    const label = formatScrollDate(item.timeMs);
+    if (elements.scrollIndicator.textContent !== label) {
+      elements.scrollIndicator.textContent = label;
+    }
+    showScrollIndicator();
   };
 
   const setLoadingText = (text) => {
@@ -282,6 +350,8 @@
     }
 
     updateTopbarMeta();
+    updateFolderCount();
+    updateFabState();
   };
 
   const setSelectionMode = (enabled) => {
@@ -305,31 +375,69 @@
       window.NasPhotoTopbar?.setMeta?.(`已选择 ${state.selected.size} 项`);
       return;
     }
-    if (state.rootList) {
-      window.NasPhotoTopbar?.setMeta?.("选择相册目录");
-      return;
-    }
-    const label =
-      state.path === "/"
-        ? `根目录 · ${state.rootName || "图库"}`
-        : `${state.rootName || "图库"}${state.path}`;
-    window.NasPhotoTopbar?.setMeta?.(label);
+    window.NasPhotoTopbar?.setMeta?.("");
   };
 
-  const updateNavState = () => {
-    if (!elements.backButton) {
+  const escapeHtml = (value) =>
+    String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const updateTopbarTitle = () => {
+    if (!window.NasPhotoTopbar) {
       return;
     }
     if (state.rootList) {
-      elements.backButton.style.display = "none";
+      window.NasPhotoTopbar.setTitle("相册目录");
       return;
     }
-    elements.backButton.style.display = "";
-    if (state.path === "/" && state.rootCount > 1) {
-      elements.backButton.textContent = "目录";
-    } else {
-      elements.backButton.textContent = "上级";
+    const segments = state.path.split("/").filter(Boolean);
+    const rootLabel = state.rootName || "根目录";
+    if (segments.length === 0) {
+      if (state.rootCount > 1) {
+        const html = `<span class="title-parent" data-action="up">${escapeHtml(
+          "相册目录",
+        )}</span><span class="title-sep">/</span><span class="title-current">${escapeHtml(
+          rootLabel,
+        )}</span>`;
+        window.NasPhotoTopbar.setTitleHtml(html);
+        return;
+      }
+      window.NasPhotoTopbar.setTitle(rootLabel);
+      return;
     }
+    const current = segments[segments.length - 1];
+    const parent =
+      segments.length === 1 ? rootLabel : segments[segments.length - 2];
+    const html = `<span class="title-parent" data-action="up">${escapeHtml(
+      parent,
+    )}</span><span class="title-sep">/</span><span class="title-current">${escapeHtml(
+      current,
+    )}</span>`;
+    window.NasPhotoTopbar.setTitleHtml(html);
+  };
+
+  const updateFolderCount = () => {
+    if (!window.NasPhotoTopbar?.setFolderCount) {
+      return;
+    }
+    if (state.rootList || state.selectionMode) {
+      window.NasPhotoTopbar.setFolderCount("");
+      return;
+    }
+    const count = state.mediaItems.length;
+    window.NasPhotoTopbar.setFolderCount(`共 ${count} 个文件`);
+  };
+
+  const updateFabState = () => {
+    if (!elements.actionButton) {
+      return;
+    }
+    const shouldShow = !state.selectionMode && !state.rootList;
+    elements.actionButton.style.display = shouldShow ? "" : "none";
   };
 
   const openViewerForItem = (item) => {
@@ -490,6 +598,17 @@
     loadFolder();
   };
 
+  const handleTitleClick = (event) => {
+    if (!window.NasPhotoTopbar?.isFoldersTab?.()) {
+      return;
+    }
+    const target = event.target.closest("[data-action='up']");
+    if (!target) {
+      return;
+    }
+    goBack();
+  };
+
   const loadConfig = async () => {
     try {
       const config = await fetchJson("/api/media/formats");
@@ -567,7 +686,7 @@
 
       ensureUniqueSelection();
       updateSelectionUI();
-      updateNavState();
+      updateTopbarTitle();
       updateLayout();
 
       if (state.items.length === 0) {
@@ -576,9 +695,7 @@
         updateOverlay(null);
       }
 
-      if (elements.actionButton) {
-        elements.actionButton.disabled = state.rootId === null;
-      }
+      updateFabState();
 
       if (!state.initialScrollDone) {
         requestAnimationFrame(() => {
@@ -729,17 +846,15 @@
   const bindEvents = () => {
     elements.scroller.addEventListener("scroll", () => {
       scheduleRender();
+      updateScrollIndicator();
     });
     window.addEventListener("resize", updateLayout);
 
     elements.items.addEventListener("click", handleTileClick);
     elements.retryButton?.addEventListener("click", loadFolder);
-    elements.backButton?.addEventListener("click", goBack);
+    elements.topbarTitle?.addEventListener("click", handleTitleClick);
 
     elements.actionButton?.addEventListener("click", () => {
-      if (elements.actionButton.disabled) {
-        return;
-      }
       openSheet(elements.actionSheet);
     });
     elements.cancelButton?.addEventListener("click", () => {
@@ -806,16 +921,17 @@
     elements.scroller = document.getElementById("folder-scroller");
     elements.spacer = document.getElementById("folder-spacer");
     elements.items = document.getElementById("folder-items");
+    elements.scrollIndicator = document.getElementById("folder-scroll-indicator");
     elements.overlay = document.getElementById("folder-overlay");
     elements.loading = document.getElementById("folder-loading");
     elements.loadingText = document.getElementById("folder-loading-text");
     elements.empty = document.getElementById("folder-empty");
     elements.error = document.getElementById("folder-error");
     elements.retryButton = document.getElementById("folder-retry");
-    elements.backButton = document.getElementById("folder-back");
+    elements.topbarTitle = document.getElementById("topbar-title");
     elements.uploadInput = document.getElementById("folder-upload-input");
 
-    elements.actionButton = document.getElementById("folder-action-button");
+    elements.actionButton = document.getElementById("folder-fab");
     elements.cancelButton = document.getElementById("folder-cancel-button");
     elements.deleteButton = document.getElementById("folder-delete-button");
 
@@ -853,13 +969,11 @@
       state.initialized = true;
       await loadFolder();
     } else {
-      updateNavState();
+      updateTopbarTitle();
       updateSelectionUI();
       updateLayout();
     }
-    if (elements.actionButton) {
-      elements.actionButton.disabled = state.rootId === null;
-    }
+    updateFabState();
   };
 
   window.FolderView = {

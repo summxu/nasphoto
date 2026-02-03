@@ -14,34 +14,8 @@
     "memoryDir": "D:\\NodeJS\\nasphoto\\data\\memories",
     "tempDir": "D:\\NodeJS\\nasphoto\\data\\tmp"
   },
-  "security": {
-    "defaultPolicy": "deny",
-    "pathTraversalGuard": true
-  },
-  "users": [
-    {
-      "id": "admin",
-      "passwordHash": "CHANGE_ME",
-      "folders": [
-        {
-          "path": "/",
-          "permissions": {
-            "view": true,
-            "create": true,
-            "modify": true,
-            "delete": true
-          }
-        }
-      ]
-    }
-  ],
-  "auth": {
-    "sessionTtlMinutes": 1440,
-    "sessionCookieName": "nasphoto_sid",
-    "passwordHashAlgorithm": "bcrypt"
-  },
   "scan": {
-    "cron": "0 3 * * *",
+    "cron": "0 0 * * *",
     "incremental": true,
     "ignoreHidden": true,
     "ignorePatterns": [
@@ -88,7 +62,7 @@
   },
   "faces": {
     "enabled": true,
-    "scanCron": "30 2 * * *",
+    "scanCron": "30 0 * * *",
     "minFaceSize": 80,
     "cluster": {
       "eps": 0.45,

@@ -26,7 +26,7 @@ const elements = {
   topbarTitle: document.getElementById("topbar-title"),
   topbarMeta: document.getElementById("topbar-meta"),
   refreshButton: document.getElementById("refresh-button"),
-  folderActionButton: document.getElementById("folder-action-button"),
+  folderCount: document.getElementById("folder-count"),
   folderCancelButton: document.getElementById("folder-cancel-button"),
   folderDeleteButton: document.getElementById("folder-delete-button"),
   galleryScroller: document.getElementById("gallery-scroller"),
@@ -100,14 +100,14 @@ const toggleElement = (el, show) => {
 const setTopbarActions = (mode, hasSelection = false) => {
   if (mode === "gallery") {
     toggleElement(elements.refreshButton, true);
-    toggleElement(elements.folderActionButton, false);
+    toggleElement(elements.folderCount, false);
     toggleElement(elements.folderCancelButton, false);
     toggleElement(elements.folderDeleteButton, false);
     return;
   }
   if (mode === "folders") {
     toggleElement(elements.refreshButton, false);
-    toggleElement(elements.folderActionButton, true);
+    toggleElement(elements.folderCount, true);
     toggleElement(elements.folderCancelButton, false);
     toggleElement(elements.folderDeleteButton, false);
     if (elements.folderDeleteButton) {
@@ -117,7 +117,7 @@ const setTopbarActions = (mode, hasSelection = false) => {
   }
   if (mode === "folders-select") {
     toggleElement(elements.refreshButton, false);
-    toggleElement(elements.folderActionButton, false);
+    toggleElement(elements.folderCount, false);
     toggleElement(elements.folderCancelButton, true);
     toggleElement(elements.folderDeleteButton, true);
     if (elements.folderDeleteButton) {
@@ -127,7 +127,7 @@ const setTopbarActions = (mode, hasSelection = false) => {
   }
 
   toggleElement(elements.refreshButton, false);
-  toggleElement(elements.folderActionButton, false);
+  toggleElement(elements.folderCount, false);
   toggleElement(elements.folderCancelButton, false);
   toggleElement(elements.folderDeleteButton, false);
 };
@@ -137,6 +137,22 @@ window.NasPhotoTopbar = {
   setTitle: (text) => {
     if (elements.topbarTitle) {
       elements.topbarTitle.textContent = text;
+    }
+  },
+  setTitleHtml: (html) => {
+    if (elements.topbarTitle) {
+      elements.topbarTitle.innerHTML = html;
+    }
+  },
+  setFolderCount: (countText) => {
+    if (elements.folderCount) {
+      const value = countText || "";
+      elements.folderCount.textContent = value;
+      if (value) {
+        elements.folderCount.style.display = "";
+      } else {
+        elements.folderCount.style.display = "none";
+      }
     }
   },
   setFolderActionMode: (mode, hasSelection = false) => {
@@ -622,12 +638,11 @@ const setActiveTab = (tabName) => {
 
   const titles = {
     gallery: "图库",
-    folders: "文件夹",
     portraits: "人像",
     memories: "回忆",
   };
-  elements.topbarTitle.textContent = titles[tabName] || "图库";
   if (tabName === "gallery") {
+    elements.topbarTitle.textContent = titles.gallery;
     setTopbarActions("gallery");
     if (state.items.length > 0) {
       setTopbarMeta(`共 ${state.items.length} 张`);
@@ -638,6 +653,7 @@ const setActiveTab = (tabName) => {
     hideScrollIndicator();
     window.FolderView?.activate?.();
   } else {
+    elements.topbarTitle.textContent = titles[tabName] || "图库";
     setTopbarActions("hidden");
     setTopbarMeta("");
     hideScrollIndicator();
