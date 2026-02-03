@@ -34,6 +34,7 @@
 
   const overlayMap = {};
   let scrollIndicatorTimer = null;
+  let selectionCountToken = 0;
 
   const UPLOAD_BATCH_LIMIT = 200 * 1024 * 1024;
   const formatBytes = (size) => {
@@ -390,13 +391,28 @@
   };
 
   const updateTopbarMeta = () => {
+    selectionCountToken += 1;
     if (state.selectionMode) {
+      const token = selectionCountToken;
       window.NasPhotoTopbar?.setMeta?.(`已选择 ${state.selected.size} 项`);
+      countSelectedMediaItems()
+        .then((count) => {
+          if (token !== selectionCountToken) {
+            return;
+          }
+          window.NasPhotoTopbar?.setMeta?.(`已选择 ${count} 项`);
+        })
+        .catch(() => {
+          if (token !== selectionCountToken) {
+            return;
+          }
+          window.NasPhotoTopbar?.setMeta?.(`已选择 ${state.selected.size} 项`);
+        });
       return;
     }
     if (!state.rootList) {
       const count = state.mediaItems.length;
-      if (!count) return
+      if (!count) return;
       window.NasPhotoTopbar?.setMeta?.(`共 ${count} 张`);
       return;
     }
@@ -443,6 +459,70 @@
       current,
     )}</span>`;
     window.NasPhotoTopbar.setTitleHtml(html);
+  };
+
+  const fetchFolderSnapshot = async (folderPath) => {
+    if (state.rootId === null) {
+      return null;
+    }
+    const query = `?root=${state.rootId}&path=${encodeURIComponent(folderPath)}`;
+    return fetchJson(`/api/folders${query}`);
+  };
+
+  const collectFolderMediaIds = async (folderPath, cache) => {
+    if (cache.has(folderPath)) {
+      return cache.get(folderPath);
+    }
+    const task = (async () => {
+      const data = await fetchFolderSnapshot(folderPath);
+      const ids = new Set();
+      const items = Array.isArray(data?.items) ? data.items : [];
+      items.forEach((item) => {
+        if (item && Number.isFinite(item.id)) {
+          ids.add(item.id);
+        }
+      });
+      const folders = Array.isArray(data?.folders) ? data.folders : [];
+      for (const folder of folders) {
+        if (!folder || typeof folder.path !== "string") {
+          continue;
+        }
+        const childIds = await collectFolderMediaIds(folder.path, cache);
+        childIds.forEach((id) => ids.add(id));
+      }
+      return ids;
+    })();
+    cache.set(folderPath, task);
+    return task;
+  };
+
+  const countSelectedMediaItems = async () => {
+    const mediaIds = new Set();
+    const folderPaths = [];
+    state.selected.forEach((key) => {
+      if (key.startsWith("media:")) {
+        const id = Number(key.replace("media:", ""));
+        if (Number.isFinite(id)) {
+          mediaIds.add(id);
+        }
+        return;
+      }
+      if (key.startsWith("folder:")) {
+        const pathValue = key.replace("folder:", "");
+        if (pathValue) {
+          folderPaths.push(pathValue);
+        }
+      }
+    });
+    if (folderPaths.length === 0 || state.rootId === null) {
+      return mediaIds.size;
+    }
+    const cache = new Map();
+    for (const folderPath of folderPaths) {
+      const ids = await collectFolderMediaIds(folderPath, cache);
+      ids.forEach((id) => mediaIds.add(id));
+    }
+    return mediaIds.size;
   };
 
   const updateFolderCount = () => {
