@@ -779,6 +779,7 @@
         state.mediaItems = (data.items || []).map((item) => ({
           kind: "media",
           id: item.id,
+          rootId: state.rootId,
           mediaType: item.mediaType,
           timeMs: item.timeMs,
           thumbUrl: item.thumbUrl,

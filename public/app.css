@@ -639,6 +639,31 @@ body::before {
     z-index: 3;
 }
 
+.viewer-delete {
+    position: absolute;
+    top: 18px;
+    left: 66px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    z-index: 3;
+}
+
+.viewer-delete svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .viewer-nav {
     position: absolute;
     top: 50%;

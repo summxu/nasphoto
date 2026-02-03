@@ -322,6 +322,16 @@ const getRootById = (rootId: number): string | null => {
 
 const getRootName = (rootId: number): string => rootNames[rootId] ?? "图库";
 
+const getRootIdByPath = (rootPath: string): number | null => {
+  const targetKey = normalizePathKey(rootPath);
+  for (let index = 0; index < libraryRoots.length; index += 1) {
+    if (normalizePathKey(libraryRoots[index]) === targetKey) {
+      return index;
+    }
+  }
+  return null;
+};
+
 const resolveFolderFsPath = (root: string, folderPath: string): string | null => {
   const rel = folderPathToRelative(folderPath);
   const resolved = path.resolve(root, rel);
@@ -575,6 +585,7 @@ const mediaStatements = {
   list: db.prepare(`
     SELECT
       id,
+      root,
       media_type,
       COALESCE(primary_time_ms, taken_time_ms, media_create_time_ms, mtime_ms, ctime_ms) AS sort_time_ms
     FROM media_items
@@ -1348,6 +1359,7 @@ server.get("/api/media", (req: Request, res: Response) => {
 
   type MediaListRow = {
     id: number;
+    root: string;
     media_type: "image" | "video";
     sort_time_ms: number | null;
   };
@@ -1359,6 +1371,7 @@ server.get("/api/media", (req: Request, res: Response) => {
 
   const items = rows.map((row) => ({
     id: row.id,
+    rootId: getRootIdByPath(row.root),
     mediaType: row.media_type,
     timeMs: row.sort_time_ms ?? 0,
     thumbUrl: `/media/thumb/${row.id}`,

@@ -50,6 +50,7 @@ const elements = {
   viewerStage: document.getElementById("viewer-stage"),
   viewerTrack: null,
   viewerInfo: document.getElementById("viewer-info"),
+  viewerDelete: document.getElementById("viewer-delete"),
   viewerClose: document.getElementById("viewer-close"),
   viewerPrev: document.getElementById("viewer-prev"),
   viewerNext: document.getElementById("viewer-next"),
@@ -68,6 +69,7 @@ const VIEWER_BACKDROP_OPACITY = 0.86;
 const VIEWER_SWIPE_RATIO = 0.18;
 const VIEWER_SWIPE_VELOCITY = 0.6;
 const VIEWER_DISMISS_RATIO = 0.18;
+const VIEWER_ANIMATE_MS = 260;
 
 const viewerGesture = {
   pointerId: null,
@@ -89,6 +91,7 @@ const overlayMap = {
 
 let scrollIndicatorTimer = null;
 let activeTab = "gallery";
+let viewerDeletePending = false;
 
 const toggleElement = (el, show) => {
   if (!el) {
@@ -562,12 +565,147 @@ const setTopbarMeta = (text) => {
   elements.topbarMeta.textContent = text;
 };
 
-const fetchJson = async (url) => {
-  const response = await fetch(url, { cache: "no-store" });
+const fetchJson = async (url, options = {}) => {
+  const response = await fetch(url, { cache: "no-store", ...options });
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
   return response.json();
+};
+
+const getViewerStageSize = () => ({
+  width: elements.viewerStage.clientWidth || window.innerWidth,
+  height: elements.viewerStage.clientHeight || window.innerHeight,
+});
+
+const getViewerTrack = () =>
+  elements.viewerTrack || elements.viewerStage.querySelector(".viewer-track");
+
+const animateViewerTrackTo = (targetX, onDone) => {
+  const track = getViewerTrack();
+  if (!track) {
+    onDone?.();
+    return;
+  }
+  track.classList.remove("is-dragging");
+  let done = false;
+  const finish = () => {
+    if (done) {
+      return;
+    }
+    done = true;
+    track.removeEventListener("transitionend", finish);
+    onDone?.();
+  };
+  track.addEventListener("transitionend", finish, { once: true });
+  track.style.transform = `translate3d(${targetX}px, 0, 0)`;
+  setTimeout(finish, VIEWER_ANIMATE_MS);
+};
+
+const updateGalleryAfterDelete = () => {
+  if (activeTab !== "gallery") {
+    return;
+  }
+  state.total = state.items.length;
+  if (state.items.length === 0) {
+    updateOverlay("empty");
+    setTopbarMeta("暂无照片");
+  } else {
+    updateOverlay(null);
+    setTopbarMeta(`共 ${state.items.length} 张`);
+  }
+  updateLayout();
+};
+
+const deleteCurrentViewerItem = async () => {
+  if (viewerDeletePending) {
+    return;
+  }
+  const index = viewerState.index;
+  if (index < 0 || index >= viewerState.items.length) {
+    return;
+  }
+  const item = viewerState.items[index];
+  if (!item || !Number.isFinite(item.id)) {
+    return;
+  }
+  const rootId = Number.isFinite(item.rootId) ? item.rootId : null;
+  if (rootId === null) {
+    alert("无法删除该文件");
+    return;
+  }
+  const confirmed = window.confirm("确认删除当前文件？");
+  if (!confirmed) {
+    return;
+  }
+  viewerDeletePending = true;
+  if (elements.viewerDelete) {
+    elements.viewerDelete.disabled = true;
+  }
+  try {
+    await fetchJson("/api/folders/items", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rootId, mediaIds: [item.id] }),
+    });
+  } catch (error) {
+    console.error(error);
+    alert("删除失败");
+    viewerDeletePending = false;
+    if (elements.viewerDelete) {
+      elements.viewerDelete.disabled = false;
+    }
+    return;
+  }
+
+  const hasNext = index < viewerState.items.length - 1;
+  const hasPrev = index > 0;
+  const finalize = () => {
+    viewerDeletePending = false;
+    if (elements.viewerDelete) {
+      elements.viewerDelete.disabled = false;
+    }
+  };
+
+  if (!hasNext && !hasPrev) {
+    viewerState.items.splice(index, 1);
+    if (viewerState.items === state.items) {
+      updateGalleryAfterDelete();
+    } else if (activeTab === "folders") {
+      window.FolderView?.refresh?.();
+    }
+    closeViewer();
+    finalize();
+    return;
+  }
+
+  const width = getViewerStageSize().width;
+  if (hasNext) {
+    animateViewerTrackTo(-2 * width, () => {
+      viewerState.items.splice(index, 1);
+      viewerState.index = Math.min(index, viewerState.items.length - 1);
+      if (viewerState.items === state.items) {
+        updateGalleryAfterDelete();
+      } else if (activeTab === "folders") {
+        window.FolderView?.refresh?.();
+      }
+      renderViewer();
+      finalize();
+    });
+    return;
+  }
+
+  animateViewerTrackTo(0, () => {
+    viewerState.items.splice(index, 1);
+    viewerState.index = Math.max(index - 1, 0);
+    if (viewerState.items === state.items) {
+      updateGalleryAfterDelete();
+    } else if (activeTab === "folders") {
+      window.FolderView?.refresh?.();
+    }
+    renderViewer();
+    finalize();
+  });
 };
 
 const loadMedia = async () => {
@@ -1058,6 +1196,7 @@ const setupEvents = () => {
     openExifSheet();
     loadExifForCurrent();
   });
+  elements.viewerDelete?.addEventListener("click", deleteCurrentViewerItem);
   elements.exifSheetBackdrop.addEventListener("click", closeExifSheet);
 
   document.addEventListener("keydown", (event) => {
