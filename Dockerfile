@@ -11,7 +11,7 @@ WORKDIR /app
 RUN if [ "$APK_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
     sed -i "s|dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; \
   fi \
-  && apk add --no-cache python3 py3-setuptools make g++
+  && apk add --no-cache python3 py3-setuptools make g++ git
 ENV PYTHON=/usr/bin/python3
 ENV npm_config_python=/usr/bin/python3
 
