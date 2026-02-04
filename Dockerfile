@@ -4,6 +4,7 @@ ARG NODE_VERSION=22
 ARG APK_MIRROR=dl-cdn.alpinelinux.org
 
 FROM node:${NODE_VERSION}-alpine AS build
+ARG APK_MIRROR
 WORKDIR /app
 
 # Build deps for native modules (e.g., better-sqlite3)
@@ -22,6 +23,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 FROM node:${NODE_VERSION}-alpine
+ARG APK_MIRROR
 WORKDIR /app
 
 RUN if [ "$APK_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
