@@ -7,11 +7,13 @@ WORKDIR /app
 
 # Build deps for native modules (e.g., better-sqlite3)
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ git \
+  && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
+  && git config --global url."https://github.com/".insteadOf "git@github.com:" \
+  && npm install --omit=dev
 
 FROM node:${NODE_VERSION}-bullseye-slim
 WORKDIR /app
