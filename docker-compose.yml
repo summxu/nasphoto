@@ -1,7 +1,12 @@
 services:
   nasphoto:
-    build: .
+    image: nasphoto:ci
     ports:
       - "3000:3000"
     environment:
       - PORT=3000
+    volumes:
+      - ./dist:/app/dist:ro
+      - ./photos/photos1:/app/data/photos/photos1
+      - ./photos/photos2:/app/data/photos/photos2
+    restart: unless-stopped

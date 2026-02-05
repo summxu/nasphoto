@@ -3,7 +3,7 @@
 ARG NODE_VERSION=22
 ARG APK_MIRROR=dl-cdn.alpinelinux.org
 
-FROM node:${NODE_VERSION}-alpine AS build
+FROM node:${NODE_VERSION}-alpine AS deps
 ARG APK_MIRROR
 WORKDIR /app
 
@@ -12,15 +12,9 @@ RUN if [ "$APK_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
     sed -i "s|dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; \
   fi \
   && apk add --no-cache python3 py3-setuptools make g++ git
-ENV PYTHON=/usr/bin/python3
-ENV npm_config_python=/usr/bin/python3
 
 COPY package*.json ./
-RUN npm install
-
-COPY . .
-RUN npm run build
-RUN npm prune --omit=dev
+RUN npm install --omit=dev
 
 FROM node:${NODE_VERSION}-alpine
 ARG APK_MIRROR
@@ -30,14 +24,13 @@ RUN if [ "$APK_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
     sed -i "s|dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; \
   fi \
   && apk add --no-cache ffmpeg \
-  && mkdir -p data/photos data/cache data/thumbs data/faces data/memories data/tmp
+  && mkdir -p data/photos data/cache data/thumbs data/faces data/memories data/tmp dist public
 
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package*.json ./
-COPY --from=build /app/public ./public
-COPY --from=build /app/config.json ./config.json
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package*.json ./
+COPY public ./public
 
 ENV NODE_ENV=production
+ENV NASPHOTO_CONFIG=/app/dist/config.json
 EXPOSE 3000
 CMD ["node", "dist/server.js"]
