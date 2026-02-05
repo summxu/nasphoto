@@ -7,6 +7,6 @@ services:
       - PORT=3000
     volumes:
       - ./dist:/app/dist:ro
-      - ./share/陈旭的文件夹/照片/2013:/app/data/photos/2013:ro
-      - ./share/陈旭的文件夹/照片/2014:/app/data/photos/2013:ro
+      - /share/陈旭的文件夹/照片/2013:/app/data/photos/2013:ro
+      - /share/陈旭的文件夹/照片/2014:/app/data/photos/2013:ro
     restart: always
