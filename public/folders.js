@@ -243,9 +243,6 @@
       totalHeight = state.rowCount * state.rowHeight - state.gap + state.edge * 2;
     }
     const contentHeight = Math.max(0, totalHeight);
-    if (elements.spacer) {
-      elements.spacer.style.height = `calc(100vh - 133px)`;
-    }
     elements.items.style.height = `${contentHeight}px`;
     if (shouldStickToBottom) {
       scrollToBottom();

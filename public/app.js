@@ -519,8 +519,6 @@ const updateLayout = () => {
     totalHeight = state.rowCount * state.rowHeight - state.gap + state.edge * 2;
   }
   const contentHeight = Math.max(0, totalHeight);
-  const viewportHeight = elements.galleryScroller.clientHeight;
-  elements.gallerySpacer.style.height = `calc(100vh - 133px)`;
   elements.galleryItems.style.height = `${contentHeight}px`;
   if (shouldStickToBottom) {
     scrollToBottom();
