@@ -82,6 +82,11 @@
     "offlineCacheDays": 365,
     "maxCacheEntries": 500
   },
+  "permissions": {
+    "hiddenDirs": [
+      "2019"
+    ]
+  },
   "tasks": {
     "workerIntervalSeconds": 5,
     "retry": {

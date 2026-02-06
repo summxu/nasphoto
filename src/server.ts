@@ -60,6 +60,97 @@ const normalizeFolderPath = (value?: string): string | null => {
   return normalized;
 };
 
+const normalizeRoutePath = (value?: string): string => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return "/";
+  }
+  let normalized = raw.replace(/\\/g, "/");
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  normalized = path.posix.normalize(normalized);
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  if (normalized.length > 1 && normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized || "/";
+};
+
+type RouteContext = {
+  routePath: string;
+  ignoreHidden: boolean;
+  allowDelete: boolean;
+};
+
+const getRouteContext = (req: Request): RouteContext => {
+  const headerPath =
+    req.header("x-nasphoto-route") ?? req.header("x-route-path") ?? "";
+  let routePath = headerPath ? normalizeRoutePath(headerPath) : "";
+  if (!routePath) {
+    const referer = req.header("referer");
+    if (referer) {
+      try {
+        routePath = normalizeRoutePath(new URL(referer).pathname);
+      } catch {
+        routePath = "";
+      }
+    }
+  }
+  if (!routePath) {
+    routePath = "/";
+  }
+  const segments = routePath.split("/").filter(Boolean);
+  const ignoreHidden = segments[0] === "all";
+  const allowDelete = segments[segments.length - 1] === "admin";
+  return { routePath, ignoreHidden, allowDelete };
+};
+
+const normalizeHiddenDir = (value: string): string | null => {
+  const normalized = normalizeFolderPath(value);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length > 1 && normalized.endsWith("/")) {
+    return normalized.slice(0, -1);
+  }
+  return normalized;
+};
+
+const buildHiddenDirFilter = (
+  hiddenDirs: string[],
+): { clause: string; args: string[] } => {
+  if (hiddenDirs.length === 0) {
+    return { clause: "", args: [] };
+  }
+  const parts: string[] = [];
+  const args: string[] = [];
+  hiddenDirs.forEach((dir) => {
+    parts.push("(dir_path = ? OR dir_path LIKE ?)");
+    const prefix = dir === "/" ? "/" : dir.replace(/\/+$/, "");
+    args.push(prefix, prefix === "/" ? "/%" : `${prefix}/%`);
+  });
+  return { clause: `AND NOT (${parts.join(" OR ")})`, args };
+};
+
+const isHiddenDirPath = (hiddenDirs: string[], dirPath: string): boolean => {
+  if (hiddenDirs.length === 0) {
+    return false;
+  }
+  const normalized = dirPath.length > 1 ? dirPath.replace(/\/+$/, "") : dirPath;
+  return hiddenDirs.some((dir) => {
+    if (dir === "/") {
+      return true;
+    }
+    if (normalized === dir) {
+      return true;
+    }
+    return normalized.startsWith(`${dir}/`);
+  });
+};
+
 const folderPathToRelative = (folderPath: string): string =>
   folderPath.replace(/^\/+/, "");
 
@@ -497,6 +588,14 @@ const videoExt = new Set(
 );
 const ignoreHidden = config.scan.ignoreHidden;
 const ignorePatterns = config.scan.ignorePatterns.map((item) => item.toLowerCase());
+const hiddenDirs = Array.from(
+  new Set(
+    config.permissions.hiddenDirs
+      .map((dir) => normalizeHiddenDir(dir))
+      .filter((dir): dir is string => Boolean(dir)),
+  ),
+);
+const hiddenDirFilter = buildHiddenDirFilter(hiddenDirs);
 
 const getMediaType = (extension: string): "image" | "video" | null => {
   if (imageExt.has(extension)) {
@@ -593,7 +692,7 @@ const mediaStatements = {
     LIMIT ? OFFSET ?
   `),
   byId: db.prepare(
-    "SELECT id, root, rel_path, media_type, thumbnail_path FROM media_items WHERE id = ?",
+    "SELECT id, root, rel_path, dir_path, media_type, thumbnail_path FROM media_items WHERE id = ?",
   ),
   byRootRel: db.prepare("SELECT id FROM media_items WHERE root = ? AND rel_path = ?"),
   detail: db.prepare(`
@@ -753,6 +852,7 @@ server.get("/api/media/formats", (_req, res) => {
 
 server.get("/api/folders", async (req: Request, res: Response) => {
   const query = req.query_parameters as Record<string, string | undefined>;
+  const routeContext = getRouteContext(req);
   const rootCount = libraryRoots.length;
   const rawRoot = query.root ?? query.rootId;
   let rootId: number | null = null;
@@ -788,6 +888,10 @@ server.get("/api/folders", async (req: Request, res: Response) => {
   const folderPath = normalizeFolderPath(query.path);
   if (!folderPath) {
     res.status(400).json({ error: "invalid_path" });
+    return;
+  }
+  if (!routeContext.ignoreHidden && isHiddenDirPath(hiddenDirs, folderPath)) {
+    res.status(404).send();
     return;
   }
 
@@ -826,6 +930,9 @@ server.get("/api/folders", async (req: Request, res: Response) => {
         path: joined.startsWith("/") ? joined : `/${joined}`,
       };
     })
+    .filter(
+      (entry) => routeContext.ignoreHidden || !isHiddenDirPath(hiddenDirs, entry.path),
+    )
     .sort((a, b) => a.name.localeCompare(b.name, "zh"));
 
   type FolderMediaRow = {
@@ -1238,6 +1345,11 @@ server.delete("/api/upload/:id", async (req: Request, res: Response) => {
 });
 
 server.delete("/api/folders/items", async (req: Request, res: Response) => {
+  const routeContext = getRouteContext(req);
+  if (!routeContext.allowDelete) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
   let body:
     | { rootId?: number; mediaIds?: number[]; folderPaths?: string[] }
     | null = null;
@@ -1344,7 +1456,13 @@ server.delete("/api/folders/items", async (req: Request, res: Response) => {
 
 server.get("/api/media", (req: Request, res: Response) => {
   const query = req.query_parameters as Record<string, string | undefined>;
-  const totalRow = mediaStatements.count.get() as { total?: number } | undefined;
+  const routeContext = getRouteContext(req);
+  const activeFilter = routeContext.ignoreHidden ? { clause: "", args: [] } : hiddenDirFilter;
+  const totalRow = activeFilter.clause
+    ? (db
+        .prepare(`SELECT COUNT(*) as total FROM media_items WHERE 1=1 ${activeFilter.clause}`)
+        .get(...activeFilter.args) as { total?: number } | undefined)
+    : (mediaStatements.count.get() as { total?: number } | undefined);
   const total = totalRow?.total ?? 0;
   const limit = parseQueryNumber(query.limit, total, {
     min: 0,
@@ -1364,10 +1482,28 @@ server.get("/api/media", (req: Request, res: Response) => {
     sort_time_ms: number | null;
   };
 
-  const rows =
-    limit > 0
-      ? (mediaStatements.list.all(limit, offset) as MediaListRow[])
-      : ([] as MediaListRow[]);
+  let rows: MediaListRow[] = [];
+  if (limit > 0) {
+    if (activeFilter.clause) {
+      rows = db
+        .prepare(
+          `
+          SELECT
+            id,
+            root,
+            media_type,
+            COALESCE(primary_time_ms, taken_time_ms, media_create_time_ms, mtime_ms, ctime_ms) AS sort_time_ms
+          FROM media_items
+          WHERE 1=1 ${activeFilter.clause}
+          ORDER BY sort_time_ms ASC, id ASC
+          LIMIT ? OFFSET ?
+        `,
+        )
+        .all(...activeFilter.args, limit, offset) as MediaListRow[];
+    } else {
+      rows = mediaStatements.list.all(limit, offset) as MediaListRow[];
+    }
+  }
 
   const items = rows.map((row) => ({
     id: row.id,
@@ -1382,6 +1518,7 @@ server.get("/api/media", (req: Request, res: Response) => {
 });
 
 server.get("/api/media/:id/exif", async (req: Request, res: Response) => {
+  const routeContext = getRouteContext(req);
   const rawId = req.path_parameters.id;
   const id = Number(rawId);
   if (!Number.isFinite(id)) {
@@ -1408,6 +1545,10 @@ server.get("/api/media/:id/exif", async (req: Request, res: Response) => {
 
   const row = mediaStatements.detail.get(id) as MediaDetailRow | undefined;
   if (!row) {
+    res.status(404).send();
+    return;
+  }
+  if (!routeContext.ignoreHidden && isHiddenDirPath(hiddenDirs, row.dir_path)) {
     res.status(404).send();
     return;
   }
@@ -1465,16 +1606,22 @@ server.get("/media/thumb/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: "invalid_id" });
     return;
   }
+  const routeContext = getRouteContext(req);
 
   type MediaRow = {
     root: string;
     rel_path: string;
+    dir_path: string;
     media_type: "image" | "video";
     thumbnail_path: string | null;
   };
 
   const row = mediaStatements.byId.get(id) as MediaRow | undefined;
   if (!row) {
+    res.status(404).send();
+    return;
+  }
+  if (!routeContext.ignoreHidden && isHiddenDirPath(hiddenDirs, row.dir_path)) {
     res.status(404).send();
     return;
   }
@@ -1497,15 +1644,21 @@ server.get("/media/original/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: "invalid_id" });
     return;
   }
+  const routeContext = getRouteContext(req);
 
   type MediaRow = {
     root: string;
     rel_path: string;
+    dir_path: string;
     media_type: "image" | "video";
   };
 
   const row = mediaStatements.byId.get(id) as MediaRow | undefined;
   if (!row) {
+    res.status(404).send();
+    return;
+  }
+  if (!routeContext.ignoreHidden && isHiddenDirPath(hiddenDirs, row.dir_path)) {
     res.status(404).send();
     return;
   }

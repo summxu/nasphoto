@@ -55,6 +55,10 @@ export interface PwaConfig {
   maxCacheEntries: number;
 }
 
+export interface PermissionsConfig {
+  hiddenDirs: string[];
+}
+
 export interface AppConfig {
   server: ServerConfig;
   storage: StorageConfig;
@@ -62,6 +66,7 @@ export interface AppConfig {
   media: MediaConfig;
   thumbnails: ThumbnailsConfig;
   logging: LoggingConfig;
+  permissions: PermissionsConfig;
   pwa?: PwaConfig;
   [key: string]: unknown;
 }
@@ -181,6 +186,10 @@ const CONFIG_SCHEMA: Record<string, Record<string, SchemaChecker>> = {
       assertType(value, pathLabel, isFiniteNumber, "a number"),
     maxCacheEntries: (value, pathLabel) =>
       assertType(value, pathLabel, isInteger, "an integer"),
+  },
+  permissions: {
+    hiddenDirs: (value, pathLabel) =>
+      assertType(value, pathLabel, isStringArray, "a string array"),
   },
 };
 

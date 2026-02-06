@@ -64,6 +64,33 @@ const elements = {
   exifContent: document.getElementById("exif-content"),
 };
 
+const normalizeRoutePath = (value) => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return "/";
+  }
+  let normalized = raw.replace(/\\/g, "/");
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  const segments = normalized.split("/").filter((segment) => segment && segment !== ".");
+  if (segments.includes("..")) {
+    return "/";
+  }
+  return `/${segments.join("/")}` || "/";
+};
+
+const getRouteInfo = () => {
+  const path = normalizeRoutePath(window.location?.pathname || "/");
+  const segments = path.split("/").filter(Boolean);
+  const ignoreHidden = segments[0] === "all";
+  const allowDelete = segments[segments.length - 1] === "admin";
+  return { path, ignoreHidden, allowDelete };
+};
+
+const routeInfo = getRouteInfo();
+window.NasPhotoRoute = routeInfo;
+
 const DEFAULT_PWA_CONFIG = {
   enabled: true,
   offlineCacheDays: 365,
@@ -105,7 +132,14 @@ const toggleElement = (el, show) => {
   el.style.display = show ? "" : "none";
 };
 
+const applyRoutePermissions = () => {
+  if (!routeInfo.allowDelete) {
+    toggleElement(elements.viewerDelete, false);
+  }
+};
+
 const setTopbarActions = (mode, hasSelection = false) => {
+  const allowDelete = routeInfo.allowDelete;
   if (mode === "gallery") {
     toggleElement(elements.refreshButton, false);
     toggleElement(elements.folderCount, false);
@@ -126,10 +160,10 @@ const setTopbarActions = (mode, hasSelection = false) => {
   if (mode === "folders-select") {
     toggleElement(elements.refreshButton, false);
     toggleElement(elements.folderCount, false);
-    toggleElement(elements.folderCancelButton, true);
-    toggleElement(elements.folderDeleteButton, true);
+    toggleElement(elements.folderCancelButton, allowDelete);
+    toggleElement(elements.folderDeleteButton, allowDelete);
     if (elements.folderDeleteButton) {
-      elements.folderDeleteButton.disabled = !hasSelection;
+      elements.folderDeleteButton.disabled = !hasSelection || !allowDelete;
     }
     return;
   }
@@ -602,7 +636,9 @@ const setTopbarMeta = (text) => {
 };
 
 const fetchJson = async (url, options = {}) => {
-  const response = await fetch(url, { cache: "no-store", ...options });
+  const headers = new Headers(options.headers || {});
+  headers.set("X-Nasphoto-Route", getRouteInfo().path);
+  const response = await fetch(url, { cache: "no-store", ...options, headers });
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
@@ -1321,6 +1357,7 @@ const init = async () => {
   updateLayout();
   setupEvents();
   setupServiceWorker();
+  applyRoutePermissions();
   await loadMedia();
 };
 

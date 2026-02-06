@@ -30,6 +30,46 @@
     uploading: false,
   };
 
+  const normalizeRoutePath = (value) => {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) {
+      return "/";
+    }
+    let normalized = raw.replace(/\\/g, "/");
+    if (!normalized.startsWith("/")) {
+      normalized = `/${normalized}`;
+    }
+    const segments = normalized.split("/").filter((segment) => segment && segment !== ".");
+    if (segments.includes("..")) {
+      return "/";
+    }
+    return `/${segments.join("/")}` || "/";
+  };
+
+  const getRouteInfo = () => {
+    const path = normalizeRoutePath(window.location?.pathname || "/");
+    const segments = path.split("/").filter(Boolean);
+    const ignoreHidden = segments[0] === "all";
+    const allowDelete = segments[segments.length - 1] === "admin";
+    return { path, ignoreHidden, allowDelete };
+  };
+
+  const routeInfo =
+    window.NasPhotoRoute && typeof window.NasPhotoRoute === "object"
+      ? window.NasPhotoRoute
+      : getRouteInfo();
+  const canDelete = Boolean(routeInfo.allowDelete);
+
+  const withRouteHeaders = (headers = {}) => {
+    const next = new Headers(headers || {});
+    const routePath =
+      typeof routeInfo.path === "string" && routeInfo.path
+        ? routeInfo.path
+        : getRouteInfo().path;
+    next.set("X-Nasphoto-Route", routePath);
+    return next;
+  };
+
   const elements = {};
 
   const overlayMap = {};
@@ -58,6 +98,7 @@
     const response = await fetch(url, {
       cache: "no-store",
       ...options,
+      headers: withRouteHeaders(options.headers),
     });
     if (!response.ok) {
       throw new Error(`Request failed: ${response.status}`);
@@ -347,6 +388,10 @@
   };
 
   const updateSelectionUI = () => {
+    if (!canDelete && state.selectionMode) {
+      state.selectionMode = false;
+      state.selected.clear();
+    }
     if (elements.view) {
       elements.view.classList.toggle("is-selecting", state.selectionMode);
     }
@@ -375,6 +420,9 @@
   };
 
   const setSelectionMode = (enabled) => {
+    if (!canDelete && enabled) {
+      return;
+    }
     state.selectionMode = enabled;
     state.selected.clear();
     updateSelectionUI();
@@ -538,7 +586,7 @@
       elements.actionButton.style.display = showAction ? "" : "none";
     }
     if (elements.fabSelection) {
-      const showSelection = state.selectionMode && !state.rootList;
+      const showSelection = state.selectionMode && !state.rootList && canDelete;
       elements.fabSelection.style.display = showSelection ? "flex" : "none";
       elements.fabSelection.setAttribute(
         "aria-hidden",
@@ -616,7 +664,7 @@
       openCreateSheet();
     } else if (action === "upload") {
       elements.uploadInput?.click();
-    } else if (action === "select") {
+    } else if (action === "select" && canDelete) {
       setSelectionMode(true);
     }
   };
@@ -883,6 +931,7 @@
         {
           method: "POST",
           body: formData,
+          headers: withRouteHeaders(),
         },
       );
       if (response.status === 413) {
@@ -920,7 +969,9 @@
           `/api/upload/chunk/${uploadId}?offset=${offset}`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/octet-stream" },
+            headers: withRouteHeaders({
+              "Content-Type": "application/octet-stream",
+            }),
             body: chunk,
           },
         );
@@ -1014,6 +1065,9 @@
   };
 
   const openDeleteConfirm = () => {
+    if (!canDelete) {
+      return;
+    }
     if (state.selected.size === 0) {
       return;
     }
@@ -1033,6 +1087,9 @@
   };
 
   const deleteSelected = async () => {
+    if (!canDelete) {
+      return;
+    }
     if (state.selected.size === 0 || state.rootId === null) {
       return;
     }
@@ -1182,6 +1239,24 @@
     overlayMap.loading = elements.loading;
     overlayMap.empty = elements.empty;
     overlayMap.error = elements.error;
+
+    if (!canDelete) {
+      elements.deleteButton?.setAttribute("aria-hidden", "true");
+      if (elements.deleteButton) {
+        elements.deleteButton.style.display = "none";
+      }
+      elements.fabSelection?.setAttribute("aria-hidden", "true");
+      if (elements.fabSelection) {
+        elements.fabSelection.style.display = "none";
+      }
+      const selectOption = elements.actionSheet?.querySelector(
+        "[data-action='select']",
+      );
+      if (selectOption) {
+        selectOption.setAttribute("aria-hidden", "true");
+        selectOption.style.display = "none";
+      }
+    }
 
     bindEvents();
     state.mounted = true;
