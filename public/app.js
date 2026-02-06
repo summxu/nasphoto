@@ -893,14 +893,36 @@ const resetViewerTransforms = (options = {}) => {
 
 const createViewerMedia = (item) => {
   if (item.mediaType === "video") {
+    const wrapper = document.createElement("div");
+    wrapper.className = "viewer-media";
+
+    const thumb = document.createElement("img");
+    thumb.className = "viewer-thumb";
+    thumb.alt = "";
+    thumb.draggable = false;
+    thumb.src = item.thumbUrl;
+
     const video = document.createElement("video");
+    video.className = "viewer-video";
     video.controls = true;
     video.playsInline = true;
     video.preload = "metadata";
-    video.src = item.originalUrl;
     video.autoplay = true;
     video.loop = true;
-    return video;
+    video.addEventListener("playing", () => {
+      wrapper.classList.add("is-playing");
+    });
+    video.src = item.originalUrl;
+
+    wrapper.appendChild(thumb);
+    wrapper.appendChild(video);
+    wrapper.addEventListener("click", () => {
+      if (wrapper.classList.contains("is-playing")) {
+        return;
+      }
+      video.play().catch(() => {});
+    });
+    return wrapper;
   }
 
   const img = document.createElement("img");
