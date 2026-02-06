@@ -1,7 +1,7 @@
 :root {
-    --bg: #f2f2f7;
-    --surface: rgba(252, 252, 255, 0.88);
-    --surface-strong: rgba(255, 255, 255, 0.96);
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-strong: #ffffff;
     --text-primary: #1c1c1e;
     --text-secondary: #6b6b70;
     --accent: #007aff;
@@ -21,6 +21,8 @@
 html,
 body {
     height: 100%;
+    width: 100%;
+    overflow: hidden;
 }
 
 body {
@@ -29,6 +31,7 @@ body {
     "Helvetica Neue", Helvetica, Arial, sans-serif;
     color: var(--text-primary);
     background: linear-gradient(180deg, #f7f7fb 0%, #eef0f6 100%);
+    overflow: hidden;
 }
 
 body::before {
