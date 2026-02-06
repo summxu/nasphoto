@@ -19,7 +19,7 @@ FROM node:${NODE_VERSION}-bullseye-slim
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+  && apt-get install -y --no-install-recommends ffmpeg imagemagick libheif1 ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p data/photos data/cache data/thumbs data/faces data/memories data/tmp dist public
 

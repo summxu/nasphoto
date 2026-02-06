@@ -6,8 +6,8 @@ services:
     environment:
       - PORT=3000
     volumes:
-      - ./dist:/app/dist:ro
-      - ./data:/app/data:ro
+      - ./dist:/app/dist
+      - ./data:/app/data
       - /share/陈旭的文件夹/照片:/app/data/photos/陈旭的照片
       - /share/任宪美的文件夹/照片:/app/data/photos/任宪美的照片
-    restart: always
+    restart: unless-stopped
