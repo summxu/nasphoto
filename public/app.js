@@ -102,6 +102,8 @@ const VIEWER_SWIPE_RATIO = 0.18;
 const VIEWER_SWIPE_VELOCITY = 0.6;
 const VIEWER_DISMISS_RATIO = 0.18;
 const VIEWER_ANIMATE_MS = 260;
+const VIEWER_ZOOM_MIN = 1;
+const VIEWER_ZOOM_MAX = 4;
 
 const viewerGesture = {
   pointerId: null,
@@ -113,6 +115,23 @@ const viewerGesture = {
   mode: null,
   stageWidth: 0,
   stageHeight: 0,
+};
+
+const viewerZoom = {
+  scale: 1,
+  startScale: 1,
+  startDistance: 0,
+  offsetX: 0,
+  offsetY: 0,
+  startOffsetX: 0,
+  startOffsetY: 0,
+  pointers: new Map(),
+};
+
+const viewerTap = {
+  lastTime: 0,
+  lastX: 0,
+  lastY: 0,
 };
 
 const overlayMap = {
@@ -904,11 +923,86 @@ const closeViewer = () => {
   viewerState.items = [];
   closeExifSheet();
   closeViewerDeleteSheet();
+  resetViewerZoom();
   resetViewerTransforms({ keepBackdrop: true });
 };
 
 const setViewerBackdropOpacity = (value) => {
   elements.viewerBackdrop.style.opacity = String(value);
+};
+
+const getViewerStageSize = () => ({
+  width: elements.viewerStage?.clientWidth || window.innerWidth,
+  height: elements.viewerStage?.clientHeight || window.innerHeight,
+});
+
+const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const getZoomTarget = () => {
+  const track =
+    elements.viewerTrack || elements.viewerStage.querySelector(".viewer-track");
+  const slide = track?.children?.[1];
+  if (!slide) {
+    return null;
+  }
+  return slide.querySelector(".viewer-zoom-target");
+};
+
+const getViewerPanBounds = () => {
+  if (viewerZoom.scale <= 1) {
+    return { maxX: 0, maxY: 0 };
+  }
+  const { width, height } = getViewerStageSize();
+  return {
+    maxX: ((viewerZoom.scale - 1) * width) / 2,
+    maxY: ((viewerZoom.scale - 1) * height) / 2,
+  };
+};
+
+const applyViewerZoom = () => {
+  const target = getZoomTarget();
+  if (!target) {
+    return;
+  }
+  target.style.transformOrigin = "center center";
+  if (viewerZoom.scale === 1 && viewerZoom.offsetX === 0 && viewerZoom.offsetY === 0) {
+    target.style.transform = "";
+    return;
+  }
+  target.style.transform = `translate3d(${viewerZoom.offsetX}px, ${viewerZoom.offsetY}px, 0) scale(${viewerZoom.scale})`;
+};
+
+const setViewerZoom = (value) => {
+  const clamped = clampNumber(value, VIEWER_ZOOM_MIN, VIEWER_ZOOM_MAX);
+  viewerZoom.scale = clamped;
+  if (clamped === 1) {
+    viewerZoom.offsetX = 0;
+    viewerZoom.offsetY = 0;
+  } else {
+    const bounds = getViewerPanBounds();
+    viewerZoom.offsetX = clampNumber(viewerZoom.offsetX, -bounds.maxX, bounds.maxX);
+    viewerZoom.offsetY = clampNumber(viewerZoom.offsetY, -bounds.maxY, bounds.maxY);
+  }
+  applyViewerZoom();
+};
+
+const setViewerPan = (nextX, nextY) => {
+  const bounds = getViewerPanBounds();
+  viewerZoom.offsetX = clampNumber(nextX, -bounds.maxX, bounds.maxX);
+  viewerZoom.offsetY = clampNumber(nextY, -bounds.maxY, bounds.maxY);
+  applyViewerZoom();
+};
+
+const resetViewerZoom = () => {
+  viewerZoom.scale = 1;
+  viewerZoom.startScale = 1;
+  viewerZoom.startDistance = 0;
+  viewerZoom.offsetX = 0;
+  viewerZoom.offsetY = 0;
+  viewerZoom.startOffsetX = 0;
+  viewerZoom.startOffsetY = 0;
+  viewerZoom.pointers.clear();
+  applyViewerZoom();
 };
 
 const resetViewerTransforms = (options = {}) => {
@@ -926,10 +1020,9 @@ const resetViewerTransforms = (options = {}) => {
 };
 
 const createViewerMedia = (item) => {
+  const wrapper = document.createElement("div");
+  wrapper.className = "viewer-media viewer-zoom-target";
   if (item.mediaType === "video") {
-    const wrapper = document.createElement("div");
-    wrapper.className = "viewer-media";
-
     const thumb = document.createElement("img");
     thumb.className = "viewer-thumb";
     thumb.alt = "";
@@ -963,7 +1056,8 @@ const createViewerMedia = (item) => {
   img.alt = "";
   img.draggable = false;
   img.src = item.originalUrl;
-  return img;
+  wrapper.appendChild(img);
+  return wrapper;
 };
 
 const createViewerSlide = (index) => {
@@ -997,6 +1091,7 @@ const renderViewer = () => {
   elements.viewerPrev.disabled = index <= 0;
   elements.viewerNext.disabled = index >= viewerState.items.length - 1;
 
+  resetViewerZoom();
   resetViewerTransforms();
   preloadNearby(index);
   if (elements.exifSheet?.classList.contains("is-visible")) {
@@ -1041,10 +1136,7 @@ const showNext = () => {
 };
 
 const setupViewerGestures = () => {
-  const getStageSize = () => ({
-    width: elements.viewerStage.clientWidth || window.innerWidth,
-    height: elements.viewerStage.clientHeight || window.innerHeight,
-  });
+  const getStageSize = () => getViewerStageSize();
 
   const getTrack = () =>
     elements.viewerTrack || elements.viewerStage.querySelector(".viewer-track");
@@ -1087,6 +1179,23 @@ const setupViewerGestures = () => {
     elements.viewerStage.classList.remove("is-dragging");
   };
 
+  const updatePointer = (event) => {
+    viewerZoom.pointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
+  const getPinchDistance = () => {
+    const points = Array.from(viewerZoom.pointers.values());
+    if (points.length < 2) {
+      return 0;
+    }
+    const dx = points[0].x - points[1].x;
+    const dy = points[0].y - points[1].y;
+    return Math.hypot(dx, dy);
+  };
+
   const onPointerDown = (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) {
       return;
@@ -1094,20 +1203,60 @@ const setupViewerGestures = () => {
     if (viewerState.index === -1) {
       return;
     }
+    updatePointer(event);
     const { width, height } = getStageSize();
-    viewerGesture.pointerId = event.pointerId;
-    viewerGesture.startX = event.clientX;
-    viewerGesture.startY = event.clientY;
-    viewerGesture.lastX = event.clientX;
-    viewerGesture.lastY = event.clientY;
-    viewerGesture.startTime = performance.now();
-    viewerGesture.mode = null;
-    viewerGesture.stageWidth = width;
-    viewerGesture.stageHeight = height;
+    if (viewerZoom.pointers.size === 2) {
+      viewerGesture.pointerId = null;
+      viewerGesture.mode = "pinch";
+      viewerZoom.startDistance = getPinchDistance();
+      viewerZoom.startScale = viewerZoom.scale;
+      elements.viewerStage.classList.add("is-dragging");
+    } else {
+      viewerGesture.pointerId = event.pointerId;
+      viewerGesture.startX = event.clientX;
+      viewerGesture.startY = event.clientY;
+      viewerGesture.lastX = event.clientX;
+      viewerGesture.lastY = event.clientY;
+      viewerGesture.startTime = performance.now();
+      viewerGesture.mode = null;
+      viewerGesture.stageWidth = width;
+      viewerGesture.stageHeight = height;
+      viewerZoom.startOffsetX = viewerZoom.offsetX;
+      viewerZoom.startOffsetY = viewerZoom.offsetY;
+    }
     elements.viewerStage.setPointerCapture(event.pointerId);
   };
 
   const onPointerMove = (event) => {
+    if (viewerZoom.pointers.has(event.pointerId)) {
+      updatePointer(event);
+    }
+
+    if (viewerZoom.pointers.size >= 2) {
+      if (viewerGesture.mode !== "pinch") {
+        viewerGesture.pointerId = null;
+        viewerGesture.mode = "pinch";
+        viewerZoom.startDistance = getPinchDistance();
+        viewerZoom.startScale = viewerZoom.scale;
+        elements.viewerStage.classList.add("is-dragging");
+      }
+    }
+
+    if (viewerGesture.mode === "pinch") {
+      if (viewerZoom.pointers.size < 2) {
+        viewerGesture.mode = null;
+        elements.viewerStage.classList.remove("is-dragging");
+        return;
+      }
+      const distance = getPinchDistance();
+      if (viewerZoom.startDistance > 0) {
+        const nextScale = viewerZoom.startScale * (distance / viewerZoom.startDistance);
+        setViewerZoom(nextScale);
+      }
+      event.preventDefault();
+      return;
+    }
+
     if (viewerGesture.pointerId !== event.pointerId) {
       return;
     }
@@ -1120,7 +1269,10 @@ const setupViewerGestures = () => {
       if (absX < 6 && absY < 6) {
         return;
       }
-      if (absX > absY * 1.1) {
+      if (viewerZoom.scale > 1) {
+        viewerGesture.mode = "pan";
+        elements.viewerStage.classList.add("is-dragging");
+      } else if (absX > absY * 1.1) {
         viewerGesture.mode = "horizontal";
         elements.viewerStage.classList.add("is-dragging");
       } else if (deltaY > 0 && absY > absX * 1.1) {
@@ -1133,7 +1285,12 @@ const setupViewerGestures = () => {
 
     event.preventDefault();
 
-    if (viewerGesture.mode === "horizontal") {
+    if (viewerGesture.mode === "pan") {
+      setViewerPan(
+        viewerZoom.startOffsetX + deltaX,
+        viewerZoom.startOffsetY + deltaY,
+      );
+    } else if (viewerGesture.mode === "horizontal") {
       const atStart = viewerState.index <= 0;
       const atEnd = viewerState.index >= viewerState.items.length - 1;
       let offsetX = deltaX;
@@ -1158,6 +1315,24 @@ const setupViewerGestures = () => {
   };
 
   const onPointerUp = (event) => {
+    if (viewerZoom.pointers.has(event.pointerId)) {
+      viewerZoom.pointers.delete(event.pointerId);
+    }
+    if (viewerGesture.mode === "pinch") {
+      if (viewerZoom.pointers.size < 2) {
+        viewerGesture.mode = null;
+        elements.viewerStage.classList.remove("is-dragging");
+      }
+      try {
+        elements.viewerStage.releasePointerCapture(event.pointerId);
+      } catch (error) {
+        console.warn("Pointer capture release failed", error);
+      }
+      if (viewerZoom.pointers.size === 0) {
+        resetDrag();
+      }
+      return;
+    }
     if (viewerGesture.pointerId !== event.pointerId) {
       return;
     }
@@ -1169,7 +1344,11 @@ const setupViewerGestures = () => {
     const velocityX = deltaX / Math.max(elapsed, 1);
     const velocityY = deltaY / Math.max(elapsed, 1);
 
-    if (viewerGesture.mode === "horizontal") {
+    const endedMode = viewerGesture.mode;
+
+    if (viewerGesture.mode === "pan") {
+      elements.viewerStage.classList.remove("is-dragging");
+    } else if (viewerGesture.mode === "horizontal") {
       const threshold = width * VIEWER_SWIPE_RATIO;
       const atStart = viewerState.index <= 0;
       const atEnd = viewerState.index >= viewerState.items.length - 1;
@@ -1211,11 +1390,31 @@ const setupViewerGestures = () => {
     } catch (error) {
       console.warn("Pointer capture release failed", error);
     }
+    if (
+      endedMode === null &&
+      event.pointerType !== "mouse" &&
+      Math.abs(deltaX) < 6 &&
+      Math.abs(deltaY) < 6
+    ) {
+      const now = performance.now();
+      const distance = Math.hypot(event.clientX - viewerTap.lastX, event.clientY - viewerTap.lastY);
+      if (now - viewerTap.lastTime < 300 && distance < 28) {
+        resetViewerZoom();
+        viewerTap.lastTime = 0;
+      } else {
+        viewerTap.lastTime = now;
+        viewerTap.lastX = event.clientX;
+        viewerTap.lastY = event.clientY;
+      }
+    }
     resetDrag();
   };
 
   const onPointerCancel = (event) => {
-    if (viewerGesture.pointerId !== event.pointerId) {
+    if (viewerZoom.pointers.has(event.pointerId)) {
+      viewerZoom.pointers.delete(event.pointerId);
+    }
+    if (viewerGesture.pointerId !== event.pointerId && viewerGesture.mode !== "pinch") {
       return;
     }
     try {
@@ -1233,6 +1432,12 @@ const setupViewerGestures = () => {
   });
   elements.viewerStage.addEventListener("pointerup", onPointerUp);
   elements.viewerStage.addEventListener("pointercancel", onPointerCancel);
+  elements.viewerStage.addEventListener("dblclick", () => {
+    if (viewerState.index === -1) {
+      return;
+    }
+    resetViewerZoom();
+  });
 };
 
 const setupServiceWorker = async () => {

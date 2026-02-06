@@ -611,6 +611,10 @@ body::before {
     place-items: center;
 }
 
+.viewer-zoom-target {
+    will-change: transform;
+}
+
 .viewer-media > img,
 .viewer-media > video {
     grid-area: 1 / 1;
