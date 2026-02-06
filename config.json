@@ -30,8 +30,7 @@
   },
   "thumbnails": {
     "sizes": [
-      256,
-      640
+      256
     ],
     "format": "jpeg",
     "quality": 82,
@@ -48,6 +47,7 @@
       ".png",
       ".webp",
       ".heic",
+      ".heif",
       ".tif",
       ".tiff"
     ],

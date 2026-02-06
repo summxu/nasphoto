@@ -184,6 +184,7 @@ const MIME_BY_EXT: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".heic": "image/heic",
+  ".heif": "image/heif",
   ".tif": "image/tiff",
   ".tiff": "image/tiff",
   ".mp4": "video/mp4",

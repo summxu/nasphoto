@@ -75,6 +75,18 @@ export const normalizeThumbExtension = (format: string): string => {
   return normalized.startsWith(".") ? normalized : `.${normalized}`;
 };
 
+const HEIC_EXTENSIONS = new Set([".heic", ".heif"]);
+
+const isHeicPath = (value: string): boolean =>
+  HEIC_EXTENSIONS.has(path.extname(value).toLowerCase());
+
+const isCommandNotFound = (error: unknown): boolean => {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return false;
+  }
+  return (error as { code?: string }).code === "ENOENT";
+};
+
 export const buildThumbnailPath = (
   config: AppConfig,
   relPosix: string,
@@ -469,6 +481,7 @@ export class ThumbnailService {
     const format = normalizeFormat(this.config.thumbnails.format);
     const qualityArgs = this.getQualityArgs(format, this.config.thumbnails.quality);
     const scaleFilter = `scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease`;
+    const isHeicSource = mediaType === "image" && isHeicPath(sourcePath);
 
     const args: string[] = [
       "-hide_banner",
@@ -508,6 +521,12 @@ export class ThumbnailService {
       await this.execFfmpeg(args);
     } catch (error) {
       await fs.rm(targetPath, { force: true });
+      if (isHeicSource) {
+        const handled = await this.tryMagickThumbnail(sourcePath, targetPath, size);
+        if (handled) {
+          return;
+        }
+      }
       if (mediaType === "video" && this.config.thumbnails.videoSeekSeconds > 0) {
         await this.retryVideoThumbnail(sourcePath, targetPath, size, error);
         return;
@@ -575,9 +594,46 @@ export class ThumbnailService {
     return [];
   }
 
+  private async tryMagickThumbnail(
+    sourcePath: string,
+    targetPath: string,
+    size: number,
+  ): Promise<boolean> {
+    const format = normalizeFormat(this.config.thumbnails.format);
+    const clampedQuality = clamp(Math.round(this.config.thumbnails.quality), 1, 100);
+    const resizeArg = `${size}x${size}>`;
+    const args = [sourcePath, "-auto-orient", "-resize", resizeArg];
+
+    if (format === "jpeg" || format === "webp") {
+      args.push("-quality", String(clampedQuality));
+    }
+
+    args.push(targetPath);
+
+    const commands = process.platform === "win32" ? ["magick"] : ["magick", "convert"];
+    for (const command of commands) {
+      try {
+        await this.execCommand(command, args);
+        return true;
+      } catch (error) {
+        if (isCommandNotFound(error)) {
+          continue;
+        }
+        await fs.rm(targetPath, { force: true });
+        throw error;
+      }
+    }
+
+    return false;
+  }
+
   private execFfmpeg(args: string[]): Promise<void> {
+    return this.execCommand(this.ffmpegPath, args);
+  }
+
+  private execCommand(command: string, args: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.ffmpegPath, args, {
+      const child = spawn(command, args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
       let stderr = "";
@@ -597,7 +653,7 @@ export class ThumbnailService {
           resolve();
         } else {
           const detail = stderr.trim();
-          reject(new Error(detail || `ffmpeg exited with code ${code}`));
+          reject(new Error(detail || `${command} exited with code ${code}`));
         }
       });
     });
