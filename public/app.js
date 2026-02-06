@@ -1,6 +1,7 @@
 const state = {
   items: [],
   total: 0,
+  offset: 0,
   columns: 3,
   gap: 2,
   edge: 6,
@@ -13,6 +14,7 @@ const state = {
   visible: new Map(),
   renderQueued: false,
   initialScrollDone: false,
+  loadingOlder: false,
 };
 
 const viewerState = {
@@ -96,6 +98,9 @@ const DEFAULT_PWA_CONFIG = {
   offlineCacheDays: 365,
   maxCacheEntries: 500,
 };
+
+const GALLERY_PAGE_SIZE = 500;
+const GALLERY_PREFETCH_ROWS = 6;
 
 const VIEWER_BACKDROP_OPACITY = 0.86;
 const VIEWER_SWIPE_RATIO = 0.18;
@@ -471,10 +476,30 @@ const showScrollIndicator = () => {
   }, 700);
 };
 
+const getLoadedRangeEnd = () => state.offset + state.items.length;
+
+const getItemByGlobalIndex = (globalIndex) => {
+  const localIndex = globalIndex - state.offset;
+  if (localIndex < 0 || localIndex >= state.items.length) {
+    return null;
+  }
+  return { item: state.items[localIndex], localIndex };
+};
+
+const getNearestLoadedItem = (globalIndex) => {
+  if (state.items.length === 0) {
+    return null;
+  }
+  const minIndex = state.offset;
+  const maxIndex = Math.max(state.offset, getLoadedRangeEnd() - 1);
+  const clamped = Math.min(maxIndex, Math.max(minIndex, globalIndex));
+  return getItemByGlobalIndex(clamped);
+};
+
 const updateScrollIndicator = () => {
   if (
     !elements.scrollIndicator ||
-    state.items.length === 0 ||
+    state.total === 0 ||
     state.rowHeight <= 0 ||
     state.columns <= 0
   ) {
@@ -485,12 +510,12 @@ const updateScrollIndicator = () => {
   const viewportHeight = scroller.clientHeight;
   const anchor = scrollTop + Math.min(120, viewportHeight * 0.2);
   const row = Math.max(0, Math.floor(anchor / state.rowHeight));
-  const index = Math.min(state.items.length - 1, row * state.columns);
-  const item = state.items[index];
-  if (!item) {
+  const index = Math.min(state.total - 1, row * state.columns);
+  const entry = getItemByGlobalIndex(index) || getNearestLoadedItem(index);
+  if (!entry?.item) {
     return;
   }
-  const label = formatScrollDate(item.timeMs);
+  const label = formatScrollDate(entry.item.timeMs);
   if (elements.scrollIndicator.textContent !== label) {
     elements.scrollIndicator.textContent = label;
   }
@@ -531,14 +556,17 @@ const updateLayout = () => {
   );
   state.cellSize = Math.max(64, cell);
   state.rowHeight = state.cellSize + state.gap;
-  state.rowCount = Math.ceil(state.items.length / state.columns);
+  state.rowCount = Math.ceil(state.total / state.columns);
 
   let totalHeight = 0;
   if (state.rowCount > 0) {
     totalHeight = state.rowCount * state.rowHeight - state.gap + state.edge * 2;
   }
-  const contentHeight = Math.max(0, totalHeight);
+  const contentHeight = Math.max(scroller.clientHeight, totalHeight);
   elements.galleryItems.style.height = `${contentHeight}px`;
+  if (elements.gallerySpacer) {
+    elements.gallerySpacer.style.height = `${contentHeight}px`;
+  }
   if (shouldStickToBottom) {
     scrollToBottom();
   }
@@ -574,24 +602,31 @@ const renderVisible = () => {
     Math.ceil((scrollTop + viewportHeight) / state.rowHeight) + state.overscan,
   );
   const startIndex = startRow * state.columns;
-  const endIndex = Math.min(state.items.length, (endRow + 1) * state.columns);
+  const endIndex = Math.min(state.total, (endRow + 1) * state.columns);
 
   const nextVisible = new Set();
 
-  for (let index = startIndex; index < endIndex; index += 1) {
-    nextVisible.add(index);
-    const row = Math.floor(index / state.columns);
-    const col = index % state.columns;
+  for (let globalIndex = startIndex; globalIndex < endIndex; globalIndex += 1) {
+    const entry = getItemByGlobalIndex(globalIndex);
+    if (!entry) {
+      continue;
+    }
+    const { item, localIndex } = entry;
+    nextVisible.add(globalIndex);
+    const row = Math.floor(globalIndex / state.columns);
+    const col = globalIndex % state.columns;
     const x = state.edge + col * (state.cellSize + state.gap);
     const y = state.edge + row * (state.cellSize + state.gap);
 
-    let tile = state.visible.get(index);
-    if (!tile) {
-      tile = createTile(index);
-      state.visible.set(index, tile);
+    let tile = state.visible.get(globalIndex);
+    if (!tile || tile.dataset.id !== String(item.id)) {
+      tile?.remove();
+      tile = createTile(item);
+      state.visible.set(globalIndex, tile);
       elements.galleryItems.appendChild(tile);
     }
 
+    tile.dataset.index = String(localIndex);
     tile.style.width = `${state.cellSize}px`;
     tile.style.height = `${state.cellSize}px`;
     tile.style.transform = `translate3d(${x}px, ${y}px, 0)`;
@@ -605,12 +640,11 @@ const renderVisible = () => {
   }
 };
 
-const createTile = (index) => {
-  const item = state.items[index];
+const createTile = (item) => {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "media-tile";
-  button.dataset.index = String(index);
+  button.dataset.id = String(item.id);
   button.setAttribute("aria-label", item.mediaType === "video" ? "视频" : "照片");
 
   const img = document.createElement("img");
@@ -662,11 +696,6 @@ const fetchJson = async (url, options = {}) => {
   return response.json();
 };
 
-const getViewerStageSize = () => ({
-  width: elements.viewerStage.clientWidth || window.innerWidth,
-  height: elements.viewerStage.clientHeight || window.innerHeight,
-});
-
 const getViewerTrack = () =>
   elements.viewerTrack || elements.viewerStage.querySelector(".viewer-track");
 
@@ -697,13 +726,17 @@ const updateGalleryAfterDelete = () => {
   }
   state.visible.forEach((node) => node.remove());
   state.visible.clear();
-  state.total = state.items.length;
-  if (state.items.length === 0) {
+  state.total = Math.max(0, state.total - 1);
+  if (state.items.length === 0 && state.total > 0) {
+    loadMedia();
+    return;
+  }
+  if (state.total === 0) {
     updateOverlay("empty");
     setTopbarMeta("暂无照片");
   } else {
     updateOverlay(null);
-    setTopbarMeta(`共 ${state.items.length} 张`);
+    setTopbarMeta(`共 ${state.total} 张`);
   }
   updateLayout();
 };
@@ -814,42 +847,40 @@ const loadMedia = async () => {
   updateOverlay("loading");
   state.items = [];
   state.total = 0;
+  state.offset = 0;
+  state.loadingOlder = false;
   state.visible.forEach((node) => node.remove());
   state.visible.clear();
   viewerState.exifCache.clear();
   state.initialScrollDone = false;
   updateLayout();
 
-  let offset = 0;
-  const limit = 500;
-  let total = Infinity;
-
   try {
-    while (offset < total) {
-      const data = await fetchJson(`/api/media?limit=${limit}&offset=${offset}`);
-      const items = Array.isArray(data.items) ? data.items : [];
-      if (total === Infinity) {
-        total = Number.isFinite(data.total) ? data.total : items.length;
-      }
-      state.total = total;
-      state.items.push(...items);
-      offset += items.length;
-
-      if (items.length === 0) {
-        break;
-      }
-
-      updateLayout();
-    }
-
-    if (state.items.length === 0) {
+    const head = await fetchJson("/api/media?limit=0&offset=0");
+    const total = Number.isFinite(head.total) ? head.total : 0;
+    state.total = total;
+    if (total === 0) {
       updateOverlay("empty");
       setTopbarMeta("暂无照片");
+      updateLayout();
       return;
     }
 
+    updateLayout();
+
+    const offset = Math.max(total - GALLERY_PAGE_SIZE, 0);
+    const data = await fetchJson(
+      `/api/media?limit=${GALLERY_PAGE_SIZE}&offset=${offset}`,
+    );
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (Number.isFinite(data.total)) {
+      state.total = data.total;
+    }
+    state.items = items;
+    state.offset = offset;
+
     updateOverlay(null);
-    setTopbarMeta(`共 ${state.items.length} 张`);
+    setTopbarMeta(`共 ${state.total} 张`);
     updateLayout();
     if (!state.initialScrollDone) {
       requestAnimationFrame(() => {
@@ -861,6 +892,62 @@ const loadMedia = async () => {
     console.error(error);
     updateOverlay("error");
     setTopbarMeta("加载失败");
+  }
+};
+
+const loadOlderItems = async () => {
+  if (state.loadingOlder || state.offset <= 0) {
+    return;
+  }
+  state.loadingOlder = true;
+  let loadedCount = 0;
+  try {
+    const nextOffset = Math.max(state.offset - GALLERY_PAGE_SIZE, 0);
+    const limit = state.offset - nextOffset;
+    const data = await fetchJson(`/api/media?limit=${limit}&offset=${nextOffset}`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (Number.isFinite(data.total)) {
+      state.total = data.total;
+      if (activeTab === "gallery") {
+        setTopbarMeta(`共 ${state.total} 张`);
+      }
+    }
+    loadedCount = items.length;
+    if (loadedCount > 0) {
+      if (viewerState.items === state.items && viewerState.index >= 0) {
+        viewerState.index += loadedCount;
+      }
+      state.items.unshift(...items);
+      state.offset = nextOffset;
+      updateLayout();
+    }
+  } catch (error) {
+    console.error(error);
+  } finally {
+    state.loadingOlder = false;
+    if (loadedCount > 0) {
+      setTimeout(() => {
+        maybeLoadOlder();
+      }, 0);
+    }
+  }
+};
+
+const maybeLoadOlder = () => {
+  if (state.loadingOlder || state.offset <= 0) {
+    return;
+  }
+  if (state.rowHeight <= 0 || state.columns <= 0) {
+    return;
+  }
+  const scroller = elements.galleryScroller;
+  const scrollTop = scroller.scrollTop;
+  const topRow = Math.max(0, Math.floor(scrollTop / state.rowHeight));
+  const topIndex = topRow * state.columns;
+  const thresholdRows = Math.max(GALLERY_PREFETCH_ROWS, state.overscan * 2);
+  const thresholdIndex = state.offset + thresholdRows * state.columns;
+  if (topIndex <= thresholdIndex) {
+    loadOlderItems();
   }
 };
 
@@ -884,8 +971,8 @@ const setActiveTab = (tabName) => {
   if (tabName === "gallery") {
     elements.topbarTitle.textContent = titles.gallery;
     setTopbarActions("gallery");
-    if (state.items.length > 0) {
-      setTopbarMeta(`共 ${state.items.length} 张`);
+    if (state.total > 0) {
+      setTopbarMeta(`共 ${state.total} 张`);
     }
   } else if (tabName === "folders") {
     setTopbarActions("folders");
@@ -1478,6 +1565,7 @@ const setupEvents = () => {
   elements.galleryScroller.addEventListener("scroll", () => {
     scheduleRender();
     updateScrollIndicator();
+    maybeLoadOlder();
   });
   window.addEventListener("resize", updateLayout);
 

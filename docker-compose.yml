@@ -7,6 +7,7 @@ services:
       - PORT=3000
     volumes:
       - ./dist:/app/dist:ro
+      - ./data:/app/data:ro
       - /share/陈旭的文件夹/照片:/app/data/photos/陈旭的照片
       - /share/任宪美的文件夹/照片:/app/data/photos/任宪美的照片
     restart: always
